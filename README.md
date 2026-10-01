@@ -230,16 +230,27 @@ but a self-consistent one, and a hard reload always gets the newest.
 
 ## Local development
 
-Generate an artifact from the sweep harness:
+Generate an artifact from the sweep harness, into a new store and a cleared
+`data/`:
 
 ```bash
 # from the anvl checkout carrying the sweep harness
 cd <anvl>/benchmarks/api-distributions
+export NV_SWEEP_STORE=/absolute/path/to/new-sweep-store
 Rscript run.R run --depth smoke --jobs 8 --backends anvl,jax
 Rscript run.R validate-refs          # needs Rmpfr; before export, or nothing is validated
 Rscript run.R status                 # coverage, errored cells, reference statuses
+rm -rf <anvl-bench>/data
 Rscript run.R export --out <anvl-bench>/data
 ```
+
+A new store matters because export selects the deepest successful result per
+cell: an older, deeper sweep left in a reused store (including the default one)
+takes precedence over the smoke run. Clearing `data/` stops optional tables from
+an earlier export surviving beside the new one. The harness's
+[Quick start](https://github.com/r-xla/anvl/blob/main/benchmarks/api-distributions/README.md#quick-start)
+lists its requirements and filters; a `--filter spec=...` keeps
+the run short, and the cells it leaves out show as never run.
 
 Then serve the repository root:
 
