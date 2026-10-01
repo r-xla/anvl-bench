@@ -116,7 +116,7 @@ Release asset (canonical)  ->  Actions downloads it  ->  Pages artifact  ->  bro
 Upload the generated ZIP to an existing release (replace the tag and filename):
 
 ```bash
-gh release upload <tag> linux-x86_64-cpu.zip --repo louisaslett/anvl-bench
+gh release upload <tag> linux-x86_64-cpu.zip --repo r-xla/anvl-bench
 ```
 
 Use `--clobber` only when intentionally replacing an existing asset. Check the
