@@ -6,9 +6,9 @@ source repository/ref, image, cluster paths and scheduler resources.
 
 Documentation ownership:
 
-- [Harness execution guide](../../anvl-sweeps/benchmarks/api-distributions/HPC.md):
+- [Harness execution guide](https://github.com/r-xla/anvl/blob/main/benchmarks/api-distributions/HPC.md):
   shard assignment, run identity, merging and completeness requirements.
-- [Harness README](../../anvl-sweeps/benchmarks/api-distributions/README.md):
+- [Harness README](https://github.com/r-xla/anvl/blob/main/benchmarks/api-distributions/README.md):
   scoring, validation, result selection and exported tables.
 - [Site publication guide](../README.md#how-the-results-get-here): release assets
   and website deployment.
@@ -111,7 +111,7 @@ with incomplete successful coverage. See the checks below.
 
 `slurm-validate.sbatch` runs after merge and writes reference-validation records
 into the analysis store. Its partitioning and interpretation are defined in the
-[harness guide](../../anvl-sweeps/benchmarks/api-distributions/HPC.md).
+[harness guide](https://github.com/r-xla/anvl/blob/main/benchmarks/api-distributions/HPC.md).
 
 Use `./submit.sh --validate-only` to retry validation against the current store,
 for example after an interrupted task. Completed failed comparisons are recorded
@@ -192,7 +192,7 @@ harness on 2026-09-29 has 256 combined cells (160 anvl, 96 JAX); the current
 different revision. Anvl/JAX twins are separate cells and are not guaranteed to
 share a task or node.
 
-Use the [harness assignment rule](../../anvl-sweeps/benchmarks/api-distributions/HPC.md#assigning-work)
+Use the [harness assignment rule](https://github.com/r-xla/anvl/blob/main/benchmarks/api-distributions/HPC.md#assigning-work)
 to inspect the actual shard contents. Increasing shards trades shorter jobs
 against startup and compilation overhead. Calibrate representative functions,
 precisions and gradient cells, rather than scaling one unusually cheap cell.
