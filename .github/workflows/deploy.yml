@@ -1,0 +1,133 @@
+name: Deploy site
+
+# The results are never committed to this repository. They live as assets on a
+# GitHub Release, and this workflow copies the chosen Release's assets into the
+# Pages artifact so the browser sees them same-origin.
+#
+# That indirection is not a preference. A browser cannot read Release asset
+# bytes: the REST asset endpoint sets CORS on its 302, but the signed
+# release-assets.githubusercontent.com target it redirects to does not, and a
+# preflight there answers 405. Discovery through the JSON API works; the bytes
+# do not. Copying them into the Pages artifact is what makes them readable.
+#
+# Which Release is deployed is recorded in the DEPLOY_RELEASE file at the root
+# of this repository, so the deployed version is in git history like anything
+# else: edit that line, push, and the commit both triggers the deploy and
+# records what went live. A Release is bound one-to-one to its tag, so naming
+# one is not the same as moving a tag.
+#
+# Precedence: the workflow_dispatch input (one run only), then the file, then
+# the repository variable of the same name if anyone has set one.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Release tag to deploy for this run only (defaults to the DEPLOY_RELEASE file)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deploys race; let a newer one supersede a queued older one.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Fetch the results from the Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_INPUT: ${{ inputs.release }}
+          TAG_VAR: ${{ vars.DEPLOY_RELEASE }}
+        run: |
+          set -euo pipefail
+
+          # A manual run wins; otherwise the file in the repository; otherwise a
+          # repository variable, kept only so an existing one is not ignored.
+          TAG="${TAG_INPUT}"
+          if [ -z "${TAG}" ] && [ -f DEPLOY_RELEASE ]; then
+            TAG="$(sed -e 's/#.*//' -e 's/[[:space:]]//g' DEPLOY_RELEASE \
+                   | grep -v '^$' | head -n 1 || true)"
+          fi
+          [ -n "${TAG}" ] || TAG="${TAG_VAR}"
+
+          if [ -z "${TAG}" ]; then
+            echo "::warning::No release named in the DEPLOY_RELEASE file; deploying the site with no data. The file picker will still work."
+            exit 0
+          fi
+
+          echo "Deploying results from release ${TAG}"
+          mkdir -p incoming data
+          gh release download "${TAG}" --dir incoming --pattern '*.zip'
+
+          # One zip per (version, platform, backend); its name becomes the
+          # artifact id, and each holds a whole export at its root.
+          shopt -s nullglob
+          found=0
+          for z in incoming/*.zip; do
+            id="$(basename "${z}" .zip)"
+            unzip -q -o "${z}" -d "data/${id}"
+            if [ ! -f "data/${id}/manifest.json" ]; then
+              echo "::error::${z} has no manifest.json at its root"
+              exit 1
+            fi
+            found=$((found + 1))
+          done
+          if [ "${found}" -eq 0 ]; then
+            echo "::error::release ${TAG} has no .zip assets"
+            exit 1
+          fi
+          rm -rf incoming
+
+          node tools/build-data-index.mjs data
+          du -sh data
+
+      - name: Assemble the site
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p _site
+          cp -r index.html css js _site/
+
+          # Pages serves everything with cache-control: max-age=600 and that is
+          # not configurable, so for ten minutes after a deploy a returning
+          # visitor can run a mix of old and new modules -- which is how a fixed
+          # site kept showing the old error. Stamping every internal reference
+          # with the commit makes each deploy a distinct set of URLs, so a page
+          # is always served whole: either all old or all new.
+          V="${SHA:0:12}"
+          perl -pi -e "s{(from \"\./[\w.-]+\.js)\"}{\$1?v=$V\"}g" _site/js/*.js
+          perl -pi -e "s{(src=\"js/[\w.-]+\.js)\"}{\$1?v=$V\"}g;
+                        s{(href=\"css/[\w.-]+\.css)\"}{\$1?v=$V\"}g" _site/index.html
+          grep -o 'v=[0-9a-f]\{12\}' _site/index.html | head -n 2
+          [ -d data ] && cp -r data _site/ || true
+          # Pages deployed from Actions does not run Jekyll, but this makes
+          # that explicit and costs nothing.
+          touch _site/.nojekyll
+          find _site -maxdepth 2 -type d -print
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deploy
+        uses: actions/deploy-pages@v4

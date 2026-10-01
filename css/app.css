@@ -1,0 +1,452 @@
+:root {
+  --bg: #fbfbfa;
+  --panel: #ffffff;
+  --ink: #1b1d1e;
+  --ink-soft: #5d6366;
+  --line: #e2e3e0;
+  --accent: #1f5fa9;
+  --warn-bg: #fdf3e3;
+  --warn-line: #e0b473;
+  --warn-ink: #8a5a11;
+  --ok-bg: #eef6ee;
+  --ok-line: #adcfad;
+  --ok-ink: #2f6b34;
+  /* Behaviour of a binade. Validated as a set, all pairs, in both modes
+     (dataviz validate_palette.js): lightness band, chroma, CVD and
+     normal-vision separation all pass. "No finite error" is deliberately not
+     a fifth hue -- there is nothing to measure there, so it is drawn hollow. */
+  --identical: #008300;
+  --some: #eda100;
+  --differ: #e87ba4;
+  --nonfinite: #4a3aa7;
+  --none: #898781;
+  --danger: #b3261e;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181a;
+    --panel: #1d2023;
+    --ink: #e6e7e6;
+    --ink-soft: #9aa1a4;
+    --line: #2e3337;
+    --accent: #7fb3f0;
+    --warn-bg: #2e2517;
+    --warn-line: #7a5f2c;
+    --warn-ink: #e8c07e;
+    --ok-bg: #1a2620;
+    --ok-line: #315340;
+    --ok-ink: #8fcc9c;
+    --identical: #008300;
+    --some: #c98500;
+    --differ: #d55181;
+    --nonfinite: #9085e9;
+    --none: #898781;
+    --danger: #f2837b;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, .mono, .bits { font-family: var(--mono); font-size: 0.92em; }
+.muted { color: var(--ink-soft); }
+.r { text-align: right; }
+sup { font-size: 0.7em; }
+
+/* --- chrome ---------------------------------------------------------- */
+
+header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1.25rem;
+  padding: 0.7rem 1.5rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.brand { font-weight: 650; letter-spacing: -0.01em; font-size: 1.05rem; color: var(--ink); }
+#source-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 1.1rem; font-size: 0.85rem; }
+.field { display: inline-flex; align-items: center; gap: 0.4rem; color: var(--ink-soft); }
+.field select, .field input[type=file] { font: inherit; max-width: 15rem; }
+.hint {
+  display: inline-grid; place-items: center;
+  width: 1.05em; height: 1.05em; border-radius: 50%;
+  border: 1px solid var(--line); font-size: 0.75rem; cursor: help;
+}
+.source-meta { display: flex; gap: 0.35rem; align-items: center; flex-wrap: wrap; }
+.tag {
+  border: 1px solid var(--line); border-radius: 3px;
+  padding: 0.05rem 0.4rem; font-family: var(--mono); font-size: 0.78rem;
+}
+
+main { max-width: 78rem; margin: 0 auto; padding: 1.5rem 1.5rem 4rem; }
+footer {
+  max-width: 78rem; margin: 0 auto; padding: 1.5rem;
+  border-top: 1px solid var(--line); font-size: 0.85rem; color: var(--ink-soft);
+}
+footer p { margin: 0.4rem 0; }
+
+h1 { font-size: 1.5rem; margin: 0.2rem 0 0.6rem; letter-spacing: -0.015em; }
+h2 { font-size: 1.05rem; margin: 0 0 0.5rem; }
+.lede { margin: 0 0 1rem; color: var(--ink-soft); max-width: 46rem; }
+.note { margin: 0 0 0.75rem; color: var(--ink-soft); font-size: 0.88rem; max-width: 52rem; }
+
+.crumbs { font-size: 0.85rem; color: var(--ink-soft); margin-bottom: 0.4rem; }
+
+.status { padding: 2rem 0; color: var(--ink-soft); }
+.status.error { color: var(--danger); }
+.status.empty { max-width: 40rem; }
+
+/* --- callouts and pills ---------------------------------------------- */
+
+.callout {
+  border: 1px solid var(--line); border-left-width: 3px;
+  border-radius: 4px; padding: 0.7rem 0.9rem; margin: 0 0 1.25rem;
+  background: var(--panel);
+}
+.callout p { margin: 0.35rem 0 0; font-size: 0.9rem; }
+.callout.warn { background: var(--warn-bg); border-color: var(--warn-line); }
+.callout.warn strong { color: var(--warn-ink); }
+.callout.ok { background: var(--ok-bg); border-color: var(--ok-line); }
+.callout.ok strong { color: var(--ok-ink); }
+
+.pill {
+  display: inline-block; border-radius: 10px; padding: 0.02rem 0.45rem;
+  font-size: 0.78rem; font-family: var(--mono); white-space: nowrap;
+}
+.pill.warn { background: var(--warn-bg); color: var(--warn-ink); border: 1px solid var(--warn-line); }
+.pill.ok { background: var(--ok-bg); color: var(--ok-ink); border: 1px solid var(--ok-line); }
+a.pill.warn:hover { text-decoration: underline; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-bottom: 0.9rem; }
+.chip {
+  border: 1px solid var(--line); border-radius: 3px; background: var(--panel);
+  padding: 0.05rem 0.4rem; font-family: var(--mono); font-size: 0.78rem;
+  color: var(--ink-soft);
+}
+.dt {
+  font-family: var(--mono); font-size: 0.8rem; font-weight: 600;
+  color: var(--accent);
+}
+
+/* --- overview tiles --------------------------------------------------- */
+
+.tiles {
+  display: grid; gap: 0.7rem;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  margin-bottom: 0.6rem;
+}
+.tile {
+  display: block; border: 1px solid var(--line); border-radius: 5px;
+  background: var(--panel); padding: 0.7rem 0.85rem; color: inherit;
+}
+.tile:hover { border-color: var(--accent); text-decoration: none; }
+.tile h2 { font-family: var(--mono); font-size: 0.95rem; margin: 0 0 0.4rem; }
+.tile-row {
+  display: grid; grid-template-columns: 2.4rem 1fr 3.2rem 2rem;
+  align-items: center; gap: 0.4rem; padding: 0.15rem 0;
+  font-family: var(--mono); font-size: 0.82rem;
+}
+.tile-row .metric { text-align: right; }
+.legend { font-size: 0.78rem; color: var(--ink-soft); margin: 0 0 1.5rem; max-width: 46rem; }
+
+/* --- tables ----------------------------------------------------------- */
+
+table.grid {
+  width: 100%; border-collapse: collapse; font-size: 0.86rem;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 5px;
+}
+table.grid th {
+  text-align: left; font-weight: 600; color: var(--ink-soft);
+  border-bottom: 1px solid var(--line); padding: 0.4rem 0.6rem; white-space: nowrap;
+}
+table.grid th[title] { cursor: help; text-decoration: underline dotted 1px; text-underline-offset: 3px; }
+table.grid td { padding: 0.32rem 0.6rem; border-bottom: 1px solid var(--line); }
+table.grid tbody tr:last-child td { border-bottom: 0; }
+table.grid td.r, table.grid th.r { text-align: right; font-family: var(--mono); }
+table.grid tr.row-warn td:first-child { box-shadow: inset 3px 0 0 var(--warn-line); }
+table.grid .chip.flag { margin-right: 0.2rem; }
+
+/* --- result page ------------------------------------------------------ */
+
+dl.stats {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.5rem 1.25rem; margin: 0 0 1.25rem;
+  border: 1px solid var(--line); border-radius: 5px; background: var(--panel);
+  padding: 0.8rem 0.9rem;
+}
+dl.stats dt { font-size: 0.75rem; color: var(--ink-soft); }
+dl.stats dd { margin: 0.1rem 0 0; font-family: var(--mono); font-size: 0.9rem; }
+
+.panel {
+  border: 1px solid var(--line); border-radius: 5px; background: var(--panel);
+  padding: 0.9rem 1rem; margin-bottom: 1rem;
+}
+
+.fold { margin-top: 1.5rem; }
+.fold summary { cursor: pointer; color: var(--ink-soft); font-size: 0.9rem; }
+.runs { margin-top: 0.7rem; }
+.run h3 { font-size: 0.85rem; margin: 0.5rem 0 0.3rem; font-family: var(--mono); }
+dl.fingerprint {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
+  gap: 0 1rem; margin: 0; font-size: 0.8rem;
+}
+dl.fingerprint dt { color: var(--ink-soft); font-size: 0.7rem; }
+dl.fingerprint dd { margin: 0 0 0.4rem; overflow-wrap: anywhere; }
+/* Each label/value pair is one grid item, so pairs cannot drift apart when the
+   column count is odd. */
+.stat { min-width: 0; }
+
+/* --- charts ----------------------------------------------------------- */
+
+.chart { margin: 0.2rem 0 0.5rem; }
+.binade-svg, .hist-svg { width: 100%; height: auto; display: block; }
+.binade-svg .grid, .hist-svg .grid { stroke: var(--line); stroke-width: 0.5; }
+.binade-svg .axis, .hist-svg .axis { stroke: var(--line); stroke-width: 1; }
+.binade-svg .zero { stroke: var(--ink-soft); stroke-width: 0.75; stroke-dasharray: 3 3; }
+.tick { fill: var(--ink-soft); font-size: 10px; font-family: var(--mono); }
+.axis-title { fill: var(--ink-soft); font-size: 9px; }
+
+.bar { cursor: pointer; }
+.bar:hover { fill: var(--accent) !important; }
+.hbar { fill: var(--accent); opacity: 0.75; }
+.hhit { fill: transparent; }
+.hhit:hover { fill: currentColor; fill-opacity: 0.06; }
+
+/* A comparator backend (JAX) is always an ink line over anvl's filled marks,
+   in every chart, so it is told apart by the kind of mark and a direct label,
+   not by one more hue. The halo is the chart surface, keeping it legible where
+   it crosses bars. */
+.cmp-halo { fill: none; stroke: var(--panel); stroke-width: 4; stroke-linejoin: round; pointer-events: none; }
+.cmp-line { fill: none; stroke: var(--ink); stroke-width: 2; stroke-linejoin: round; pointer-events: none; }
+.cmp-label { fill: var(--ink); font-size: 10px; font-weight: 600; pointer-events: none; }
+i.k-cmp { background: none; border-top: 2px solid var(--ink); height: 0 !important; border-radius: 0 !important; width: 1rem !important; }
+i.k-anvl { background: var(--accent); opacity: 0.75; }
+
+/* Fill for SVG marks; background only for legend swatches -- the chips for the
+   top exponent field carry these classes too and must stay readable. */
+.b-identical { fill: var(--identical); } i.b-identical { background: var(--identical); }
+.b-some { fill: var(--some); } i.b-some { background: var(--some); }
+.b-differ { fill: var(--differ); } i.b-differ { background: var(--differ); }
+.b-nonfinite { fill: var(--nonfinite); } i.b-nonfinite { background: var(--nonfinite); }
+.b-none, i.b-none { fill: none; stroke: var(--none); stroke-width: 0.75; }
+i.b-none { background: none; border: 1px solid var(--none); box-sizing: border-box; }
+.b-other { fill: var(--ink-soft); } i.b-other { background: var(--ink-soft); }
+
+.chart-foot {
+  display: flex; flex-wrap: wrap; justify-content: space-between;
+  align-items: center; gap: 0.5rem; font-size: 0.78rem; color: var(--ink-soft);
+}
+.key { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+.key-item { display: inline-flex; align-items: center; gap: 0.3rem; }
+.key-item i { width: 0.7rem; height: 0.7rem; border-radius: 2px; display: inline-block; }
+
+button.link {
+  background: none; border: 0; padding: 0; font: inherit;
+  color: var(--accent); cursor: pointer; text-decoration: underline;
+}
+
+.special-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem;
+  font-size: 0.78rem; color: var(--ink-soft); margin-top: 0.3rem;
+}
+.special-label { margin-right: 0.2rem; }
+.special-row .chip { color: var(--ink); }
+.special-row .chip.b-identical { border-color: var(--identical); }
+.special-row .chip.b-differ { border-color: var(--differ); }
+.special-row .chip.b-nonfinite { border-color: var(--nonfinite); }
+.special-row .chip.b-some { border-color: var(--some); }
+.special-row .chip { border-width: 1px 1px 1px 4px; }
+
+@media (max-width: 600px) {
+  main { padding: 1rem; }
+  header { padding: 0.6rem 1rem; }
+  table.grid { font-size: 0.78rem; }
+}
+
+/* The cell name is dtype + kind + parameter set: keep it on one line. */
+table.grid td:first-child { white-space: nowrap; }
+
+/* Invisible click columns over the binade chart: the bars themselves are
+   under two pixels wide at full range. */
+.binade-svg .hit { fill: transparent; cursor: pointer; }
+.binade-svg .hit:hover { fill: currentColor; fill-opacity: 0.07; }
+
+.table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.table-wrap:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+body { overflow-x: hidden; }
+
+/* --- comparison with another backend --------------------------------- */
+
+/* The comparator's figures sit beside anvl's in the same ink -- they are data,
+   not decoration -- and are set off only by a rule on their left. */
+td.cmp, th.cmp { border-left: 1px solid var(--line); }
+.compare { margin: 0 0 1.25rem; max-width: 44rem; }
+.compare table.grid th[scope=row] {
+  font-weight: 400; color: var(--ink-soft); text-align: left; white-space: nowrap;
+  border-bottom: 1px solid var(--line); padding: 0.32rem 0.6rem;
+}
+.compare table.grid tbody tr:last-child th { border-bottom: 0; }
+
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; margin: 0 0 0.6rem; }
+.seg button {
+  font: inherit; font-size: 0.82rem; padding: 0.2rem 0.8rem; border: 0; cursor: pointer;
+  background: var(--panel); color: var(--ink-soft);
+}
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button.on { background: var(--ink); color: var(--panel); }
+.seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+td.cmp.none { font-size: 0.8rem; font-style: italic; }
+/* Two flag chips side by side are the widest thing in the function table;
+   let them stack rather than push the table off the page. */
+table.grid td.flags { max-width: 10.5rem; }
+table.grid td.flags .chip { display: inline-block; margin: 0.1rem 0.2rem 0.1rem 0; }
+
+/* Comparator headers are long ("JAX worst rel err"); let them take two lines. */
+table.grid th.cmp, table.grid th.cmp + th { white-space: normal; min-width: 5.5rem; line-height: 1.25; }
+/* Prose stays at a readable measure even though main is wider for tables. */
+.callout, .note, .lede, .legend { max-width: 52rem; }
+
+/* --- drag to zoom ------------------------------------------------------ */
+
+/* pan-y keeps vertical page scrolling on touch while a horizontal drag brushes. */
+.binade-svg { cursor: crosshair; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+.binade-svg .brush { fill: var(--accent); fill-opacity: 0.12; stroke: var(--accent); stroke-width: 1; pointer-events: none; }
+.panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
+.panel-head h2 { margin-bottom: 0.5rem; }
+button.reset {
+  font: inherit; font-size: 0.78rem; padding: 0.15rem 0.6rem; cursor: pointer;
+  border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: var(--ink);
+}
+button.reset:hover { border-color: var(--accent); }
+button.reset:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.range-line {
+  font-size: 0.85rem; margin: 0.2rem 0 0.6rem; padding: 0.45rem 0.7rem;
+  border-left: 3px solid var(--accent); background: var(--bg);
+}
+
+/* --- input classes ------------------------------------------------------ */
+
+/* Chart backgrounds: a tint for zero & subnormal inputs, a 45-degree hatch for
+   inputs outside the support. Texture rather than hue, so neither can be
+   mistaken for one of the behaviour colours on the bars in front. */
+.binade-svg .bg { pointer-events: none; }
+.binade-svg .bg-sub { fill: var(--ink-soft); fill-opacity: 0.12; }
+.binade-svg .bg-zero { fill: var(--ink-soft); fill-opacity: 0.28; }
+.binade-svg .bg-oos { fill: url(#hatch-oos); }
+.binade-svg .hatch { stroke: var(--ink-soft); stroke-opacity: 0.35; stroke-width: 1.5; }
+i.k-bg-sub { background: var(--ink-soft); opacity: 0.25; }
+i.k-bg-zero { background: var(--ink-soft); opacity: 0.5; }
+i.k-bg-oos {
+  background: repeating-linear-gradient(45deg, var(--ink-soft) 0 1px, transparent 1px 4px);
+  opacity: 0.6; border: 1px solid var(--line);
+}
+.key-sep { width: 1px; align-self: stretch; background: var(--line); }
+
+/* An output that underflowed to zero: marked, never hidden. */
+.uf {
+  display: inline-block; font-size: 0.72em; font-family: var(--mono); line-height: 1.2;
+  padding: 0 0.25em; border: 1px solid var(--line); border-radius: 3px;
+  color: var(--ink-soft); cursor: help; vertical-align: 0.1em;
+}
+
+/* Overview tiles gain a header and a column. */
+.tiles { grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr)); }
+.tile-row { grid-template-columns: 2.4rem 1fr 3.4rem 4rem 3rem; }
+.tile-row > span:last-child { justify-self: end; }
+.tile-row .r, .tile-row .metric { text-align: right; }
+.tile-head { font-family: inherit; font-size: 0.68rem; color: var(--ink-soft); padding-bottom: 0.1rem; }
+
+/* Grouped table headers: a rule starts each group. */
+table.grid tr.groups th { font-size: 0.72rem; font-weight: 600; border-bottom: 0; padding-bottom: 0; }
+table.grid th.grp, table.grid td.grp { border-left: 1px solid var(--line); }
+.compare.classes table.grid th.cls { white-space: normal; min-width: 9rem; max-width: 15rem; }
+.classes .expect { color: var(--ink-soft); font-size: 0.74rem; font-weight: 400; line-height: 1.3; margin-top: 0.1rem; }
+.classes tr.all-row th, .classes tr.all-row td { border-top: 2px solid var(--line); }
+.classes { max-width: none; }
+
+/* --- schema v7: categories, references, set-aside figures --------------- */
+
+/* Categories and statuses as pills. Colour follows meaning only where there is
+   one to carry: a failure warns, a verified limitation reads as settled, and
+   everything neutral stays in ink -- never a hue per category. */
+.pill.neutral { background: var(--panel); color: var(--ink); border: 1px solid var(--line); }
+.pill.muted { background: none; color: var(--ink-soft); border: 1px dashed var(--line); }
+.pills { display: inline-flex; flex-wrap: wrap; gap: 0.25rem; }
+.findings { margin: -0.4rem 0 1rem; }
+.chips .pills { margin-left: 0.2rem; }
+
+/* A figure with verified base R limitations set aside: marked, never silent. */
+.sa { font-size: 0.8em; color: var(--ink-soft); cursor: help; }
+.sa-line { font-size: 0.72rem; color: var(--ink-soft); white-space: nowrap; }
+
+.small { font-size: 0.78rem; }
+td.small { max-width: 18rem; }
+div.small { margin-top: 0.1rem; }
+ul.facts { margin: -0.6rem 0 1.1rem; padding-left: 1.2rem; font-size: 0.86rem; color: var(--ink-soft); max-width: 52rem; }
+ul.facts strong { color: var(--ink); font-family: var(--mono); font-weight: 600; }
+
+.vblock + .vblock { margin-top: 1.1rem; padding-top: 0.9rem; border-top: 1px solid var(--line); }
+.vblock h3 { font-size: 0.92rem; margin: 0 0 0.6rem; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+.fold.inner { margin-top: 0.6rem; }
+.panel dl.stats { margin: 0.4rem 0 0.8rem; }
+
+table.grid td.wrap { white-space: normal; min-width: 10rem; max-width: 22rem; overflow-wrap: anywhere; }
+/* A jump to a panel lands below the sticky header, not under it. */
+section.panel { scroll-margin-top: 4.5rem; }
+
+/* An input that copies a reproduction script when clicked: reads as the
+   figure it is, with a dotted underline saying it does something. */
+button.repro {
+  background: none; border: 0; padding: 0; margin: 0; font: inherit; color: inherit;
+  text-align: inherit; cursor: copy;
+  text-decoration: underline dotted var(--ink-soft); text-underline-offset: 3px;
+}
+button.repro:hover { color: var(--accent); text-decoration-color: var(--accent); }
+button.repro:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+
+.toast {
+  position: fixed; left: 50%; bottom: 1.25rem; transform: translate(-50%, 1rem);
+  max-width: calc(100vw - 2rem); padding: 0.55rem 0.9rem; border-radius: 6px;
+  background: var(--ink); color: var(--bg); font-size: 0.85rem;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  opacity: 0; pointer-events: none; transition: opacity 0.15s, transform 0.15s; z-index: 10;
+}
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+.toast.error { background: var(--danger); color: #fff; }
+
+/* Explanations and controls remain readable with full labels. */
+.local-results summary { cursor: pointer; color: var(--accent); }
+.local-results[open] { flex-basis: 100%; }
+.local-results .note { margin: 0.5rem 0; }
+.filters { display: flex; flex-wrap: wrap; gap: 0.6rem 1rem; margin-bottom: 0.75rem; }
+.tiles { grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); }
+.tile-row { grid-template-columns: 2.4rem minmax(4rem, 1fr) 4.5rem 4.5rem; }
+.tile-head { font-size: 0.78rem; }
+.legend, .note { font-size: 0.9rem; }
+table.grid th { white-space: normal; min-width: 6rem; }
+.pills { min-width: 12rem; }
+.pill { white-space: normal; }
+.sa-line { white-space: normal; min-width: 10rem; }
+.configuration-table td:first-child, .configuration-table thead tr:last-child th:first-child {
+  position: sticky; left: 0; z-index: 1; background: var(--panel);
+  border-right: 1px solid var(--line);
+}
+@media (max-width: 600px) {
+  header { position: static; }
+  table.grid { font-size: 0.86rem; }
+  .filters .field { flex-wrap: wrap; }
+}

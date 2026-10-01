@@ -1,0 +1,13 @@
+# Benchmark artifacts are never committed. They are downloaded from GitHub
+# Releases by the deploy workflow and published straight into the Pages
+# artifact, so they are same-origin at runtime but absent from git history.
+# Locally, generate one with:
+#   Rscript run.R export --out <this repo>/data
+# from anvl-sweeps/benchmarks/api-distributions.
+data/
+
+.DS_Store
+node_modules/
+
+# Packed release assets, built from data/ by the command in the README.
+dist/

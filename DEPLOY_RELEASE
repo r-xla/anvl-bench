@@ -1,0 +1,17 @@
+# Which GitHub Release this site is deployed from.
+#
+# The first non-comment line is the release tag. The deploy workflow downloads
+# that Release's assets and publishes them inside the Pages artifact, so the
+# browser reads them same-origin -- Release asset bytes are not fetchable from
+# a browser directly (no CORS on the signed redirect target).
+#
+# Changing this line and pushing to main is the whole deployment: the commit
+# triggers the workflow, and the diff records which results went live and when.
+#
+# Leave it empty to deploy the site with no data; the file picker still works.
+#
+# To preview another Release without changing what is deployed, run the
+# workflow by hand with its `release` input -- that overrides this for one run
+# and does not persist.
+
+v0.4.0
