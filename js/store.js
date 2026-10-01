@@ -3,9 +3,9 @@
 //
 // Read strategy, in three tiers:
 //
-//   eager    manifest.json + summary, runs, categories and validations: small,
-//            and enough to render the overview and every function page
-//            without touching another byte.
+//   eager    manifest.json + summary, coverage, runs, categories and
+//            validations: small, and enough to render the overview and every
+//            function page without touching another byte.
 //   whole    hist, ranges and validation_samples, read once on the first leaf
 //            page and kept.
 //   by cell  detail, bands, points and disputes are sorted by cell with a row
@@ -16,12 +16,12 @@
 
 import { parquetMetadataAsync, parquetReadObjects } from "./hyparquet.js";
 
-const EAGER = ["summary", "runs", "categories", "validations"];
+const EAGER = ["summary", "coverage", "runs", "categories", "validations"];
 const WHOLE = ["hist", "ranges", "validation_samples"];
 const BY_CELL = ["detail", "bands", "points", "disputes"];
 
 /** The oldest artifact layout this site reads (the harness's SCHEMA_VERSION). */
-export const SCHEMA = 7;
+export const SCHEMA = 8;
 
 const SEP = "␟"; // never appears in a cell_id or an output name
 
@@ -69,8 +69,12 @@ export async function openStore(source) {
   const listed = (t) =>
     source.has(t) && (manifest.files ?? []).some((f) => f.table === t && f.rows > 0);
 
-  const [summary, runs, categories, validations] = await Promise.all([
+  const [summary, coverage, runs, categories, validations] = await Promise.all([
     readAll("summary"),
+    // Every declared cell, with the depth it was swept at and its newest
+    // error: what lets a page say a configuration errored or never ran,
+    // rather than leaving it out.
+    readAll("coverage"),
     // The fingerprint is nice to have, not load-bearing: a partial artifact
     // (just manifest + summary) should still open.
     source.has("runs") ? readAll("runs").catch(() => []) : [],
@@ -165,9 +169,16 @@ export async function openStore(source) {
   const twin = (r, backend = comparators[0]) =>
     backend === undefined ? undefined : byKey.get(twinId(r.cell_id, backend) + SEP + r.output);
 
-  const specs = [...new Set(subject.map((r) => r.spec))].sort();
+  // A function whose every configuration errored has no results, and is still
+  // one of the functions this artifact is about.
+  const specs = [...new Set([...subject, ...coverage.filter((c) => c.backend === primary)].map((r) => r.spec))].sort();
   const bySpec = new Map(specs.map((s) => [s, subject.filter((r) => r.spec === s)]));
   const runById = new Map(runs.map((r) => [r.run_id, r]));
+  const coverageById = new Map();
+  for (const c of coverage) {
+    if (!coverageById.has(c.cell_id)) coverageById.set(c.cell_id, []);
+    coverageById.get(c.cell_id).push(c);
+  }
 
   const byClass = new Map();
   for (const c of categories) {
@@ -193,6 +204,9 @@ export async function openStore(source) {
     source,
     manifest,
     summary: subject,
+    coverage,
+    /** A declared cell's coverage rows, one per platform; empty if undeclared. */
+    coverageOf: (cellId) => coverageById.get(cellId) ?? [],
     validationsOf,
     samplesOf,
     has: listed,

@@ -1,6 +1,9 @@
 // What a result's figures add up to. A port of the harness's result_state()
-// (R/store.R), so the site and the terminal can never classify a result
+// (R/store.R), so the site and the harness can never classify a result
 // differently. Every flag states a fact; nothing here judges.
+//
+// Beside it, what the store holds for each declared cell (the harness's
+// coverage_table()).
 
 /** Input classes, as the harness splits them (input_class() in R/engine.R). */
 export const CLASSES = {
@@ -69,6 +72,20 @@ export const REF_STATUS = {
   "not validated": { cls: "neutral", label: "not validated" },
   "no identity": { cls: "warn", label: "Reference identity unavailable" },
 };
+
+/**
+ * A declared cell's state from its coverage rows: errored when its newest
+ * attempt at some depth errored (a result from another depth may still be
+ * shown), swept when it has a result, otherwise never run.
+ */
+export function coverageState(rows) {
+  if (rows.some((c) => c.error !== null && c.error !== undefined)) return "errored";
+  if (rows.some((c) => c.depth !== null && c.depth !== undefined)) return "swept";
+  return "not_run";
+}
+
+/** The first line of an error message, for a table cell. */
+export const firstLine = (e) => String(e ?? "").split("\n")[0];
 
 const n0 = (v) => (typeof v === "number" && !Number.isNaN(v) ? v : 0);
 

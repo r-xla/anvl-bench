@@ -15,10 +15,11 @@ presents their results.
 
 ## What the site shows
 
-The site reads an artifact exported by the harness (schema version 7 or
+The site reads an artifact exported by the harness (schema version 8 or
 later; an older one is refused with a message, rather than mislabelled). Every
 classification is the harness's own, and `js/model.js` ports its
-`result_state()` so a page and `run.R status` can never disagree.
+`result_state()` and its coverage states, so a page and the harness can never
+disagree.
 
 **Input classes.** Relative error is the right measure only for ordinary
 inputs, so every result is split by the class of its input
@@ -44,6 +45,13 @@ region and each exact point a tested cause and a category: *failure*,
 *verified base R limitation*. All are shown. Only the last two are set aside,
 and a figure with verified base R limitations set aside is always marked (†)
 with the figure against base R beside it — never in its place.
+
+**Coverage.** Every declared configuration is accounted for
+(`coverage.parquet`). One that errored or was never run is counted on the
+overview and its function's tile, listed with its error on the function's
+page, and has a page of its own with the full message. One whose newest
+attempt errored at a depth, while another depth succeeded, keeps that result
+and is marked on it. None of them is counted in any figure.
 
 **Exact points** (±0, ±∞, NaN, extremes, ±½, ±1, domain and support edges,
 anvl's branch points, and their neighbours) are listed on each result page,
@@ -74,7 +82,9 @@ count stay anvl's alone — a JAX result is never counted as one of anvl's. JAX
 appears beside anvl on each function's page, and on each result page as a
 second column of figures, an ink line over the binade chart and the histogram,
 and a tab on the worst inputs. Variants JAX does not offer (for example
-`log_p = TRUE` quantiles) say so rather than showing blanks.
+`log_p = TRUE` quantiles) say so rather than showing blanks, and a JAX twin
+that errored or was never run is shown as such. JAX's own coverage is a line on
+the overview, apart from anvl's.
 
 JAX is always drawn as a line over anvl's filled marks, so the two are told apart
 by the kind of mark and a direct label, not by one more colour. The binade
@@ -109,9 +119,11 @@ Upload the generated ZIP to an existing release (replace the tag and filename):
 gh release upload <tag> linux-x86_64-cpu.zip --repo louisaslett/anvl-bench
 ```
 
-Use `--clobber` only when intentionally replacing an existing asset. Verify the
-artifact's coverage and manifest before upload; producing a ZIP does not certify
-that all sweep cells or reference checks succeeded.
+Use `--clobber` only when intentionally replacing an existing asset. Check the
+store with `status` and the export's manifest before upload. Errored and
+never-run configurations are shown on the site, and the export warns about
+them, but neither blocks publication; producing a ZIP does not certify that all
+sweep cells or reference checks succeeded.
 
 Which Release is deployed is recorded in the **`DEPLOY_RELEASE`** file at the
 root of this repository — one line holding a release tag. Deploying is therefore
@@ -155,7 +167,7 @@ asset's basename becomes the artifact id and the directory it is unpacked into:
 ```
 darwin-arm64-cpu.zip
   manifest.json
-  runs.parquet  summary.parquet  categories.parquet  detail.parquet
+  runs.parquet  summary.parquet  coverage.parquet  categories.parquet  detail.parquet
   bands.parquet  hist.parquet  ranges.parquet  kinds.parquet
   points.parquet  disputes.parquet  validations.parquet  validation_samples.parquet
 ```
@@ -225,6 +237,7 @@ Generate an artifact from the sweep harness:
 cd <anvl>/benchmarks/api-distributions
 Rscript run.R run --depth smoke --jobs 8 --backends anvl,jax
 Rscript run.R validate-refs          # needs Rmpfr; before export, or nothing is validated
+Rscript run.R status                 # coverage, errored cells, reference statuses
 Rscript run.R export --out <anvl-bench>/data
 ```
 
@@ -257,7 +270,7 @@ js/hyparquet.js         the pinned dependency, imported in one place
 js/fmt.js               formatting, including the values JSON cannot carry
 js/source.js            where bytes come from: deployed URL, or local files
 js/store.js             what to read and how little of it
-js/model.js             result state, classes, categories: the harness's rules
+js/model.js             result state, classes, categories, coverage: the harness's rules
 js/chart.js             hand-written SVG; no charting library
 js/app.js               router and views
 js/snippet.js           the copy-to-clipboard reproduction scripts
@@ -272,6 +285,7 @@ URLs carry the whole navigable state, so a finding can be linked from an issue:
 #/                                                  overview
 #/spec/nv_qnorm                                     one function
 #/cell/<cell_id>/<output>?z=<from>-<to>             one result, zoomed to a range
+#/cell/<cell_id>/-                                  a configuration that errored or never ran
 ```
 
 All paths in the site are relative, so it works as a project page today and

@@ -17,7 +17,7 @@
 import { asyncBufferFromUrl } from "./hyparquet.js";
 
 const TABLES = [
-  "runs", "summary", "detail", "bands", "hist", "ranges", "categories",
+  "runs", "summary", "coverage", "detail", "bands", "hist", "ranges", "categories",
   "points", "kinds", "disputes", "validations", "validation_samples",
 ];
 

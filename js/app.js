@@ -14,7 +14,7 @@ import { openStore } from "./store.js";
 import { binadeChart, histChart, bandKey, BEHAVIOUR } from "./chart.js";
 import { num, int, pct, cellParts, flagList } from "./fmt.js";
 import { snippet } from "./snippet.js";
-import { CLASSES, CATEGORIES, CAUSES, REF_STATUS, state, headline } from "./model.js";
+import { CLASSES, CATEGORIES, CAUSES, REF_STATUS, state, headline, coverageState, firstLine } from "./model.js";
 
 // --- tiny DOM helper ---------------------------------------------------
 
@@ -281,6 +281,8 @@ function aggregate(rows) {
 /** The findings of one result, as a row of pills: every category shown. */
 function findingPills(r) {
   const out = [];
+  const err = app.store.coverageOf(r.cell_id).find((c) => c.error !== null && c.error !== undefined);
+  if (err) out.push(pill("warn", `errored at ${err.error_depth}`, `The newest attempt at ${err.error_depth} depth errored; this result is from ${err.depth}. ${err.error}`));
   const regions = r.n_runs_unclassified ?? 0;
   const points = r.n_points_failure ?? 0;
   if (regions || points) out.push(catPill("failure", "Unexplained: " + [regions ? `${regions} region${regions === 1 ? "" : "s"}` : null, points ? `${points} test point${points === 1 ? "" : "s"}` : null].filter(Boolean).join("; ")));
@@ -309,6 +311,32 @@ function refPills(r, plain = false) {
   return out.length ? h("span.pills", {}, out) : h("span.muted", {}, referenceLabel(r));
 }
 
+/** A backend's declared configurations, optionally for one function. */
+const declaredOf = (backend, spec = null) =>
+  app.store.coverage.filter((c) => c.backend === backend && (spec === null || c.spec === spec));
+
+/** Declared configurations that errored or were never run, and the counts. */
+function coverageOf(backend, spec = null) {
+  const rows = declaredOf(backend, spec);
+  const missing = rows.filter((c) => coverageState([c]) !== "swept");
+  return {
+    declared: rows.length,
+    errored: missing.filter((c) => coverageState([c]) === "errored").length,
+    notRun: missing.filter((c) => coverageState([c]) === "not_run").length,
+    missing,
+  };
+}
+
+/** "2 errored and 3 never run", leaving out what is zero. */
+const missingWords = (cv) =>
+  [cv.errored ? `${cv.errored} errored` : null, cv.notRun ? `${cv.notRun} never run` : null]
+    .filter(Boolean).join(" and ");
+
+/** A pill for a configuration that errored or never ran, its error on hover. */
+const coveragePill = (c) => (coverageState([c]) === "errored"
+  ? pill("warn", c.depth ? `errored at ${c.error_depth}` : "errored", c.error)
+  : pill("neutral", "never run", "Declared, but no run in this artifact swept it"));
+
 // --- overview ----------------------------------------------------------
 
 function renderOverview() {
@@ -330,6 +358,25 @@ function renderOverview() {
       `${cmp} is swept alongside as a comparator, against the same reference and on the same inputs. `,
       `${nTwin} of ${all.n} anvl results have a ${cmp} equivalent; the rest are variants ${cmp} does not offer. `,
       `The overview shows anvl’s results. Open a function or result for the JAX comparison.`));
+  }
+
+  // Configurations that errored or never ran come first: nothing below can
+  // speak for them.
+  const cov = coverageOf(s.primary);
+  if (cov.missing.length) {
+    const specsMissing = s.specs
+      .map((spec) => ({ spec, n: coverageOf(s.primary, spec).missing.length }))
+      .filter((d) => d.n > 0);
+    out.push(h("div.callout.warn", {},
+      h("strong", {}, `${cov.missing.length} of ${cov.declared} test configurations errored or were never run: ${missingWords(cov)}`),
+      h("p", {}, "One that errored but has a result from another depth keeps that result, marked; the rest have no result, and none of the figures below include them. Affected functions: ",
+        specsMissing.map((d, i) => [i ? ", " : "", h("a", { href: specHref(d.spec) }, `${d.spec} (${d.n})`)]), ".")));
+  }
+  for (const b of [...new Set(s.coverage.map((c) => c.backend))].filter((b) => b !== s.primary)) {
+    const cb = coverageOf(b);
+    if (cb.missing.length) {
+      out.push(h("p.note", {}, `${backendLabel(b)}: ${cb.missing.length} of ${cb.declared} comparison configurations errored or were never run (${missingWords(cb)}).`));
+    }
   }
 
   // The headline: failures -- no finite error on valid inputs, for no tested
@@ -399,6 +446,11 @@ function renderOverview() {
           ? h("span.pill.warn", { title: "Configurations with unexplained disagreements" }, `${a.failing}`)
           : h("span.pill.ok", { title: "No unexplained failures found" }, "✓")));
     }
+    const tc = coverageOf(s.primary, spec);
+    if (tc.missing.length) {
+      body.append(h("div.tile-note", {}, h("span.pill.warn", { title: "Configurations that errored or were never run" },
+        `${tc.missing.length} of ${tc.declared}: ${missingWords(tc)}`)));
+    }
     tile.append(body);
     grid.append(tile);
   }
@@ -463,7 +515,8 @@ const specFilters = { precision: "all", kind: "all", findings: "all" };
 function renderSpec(spec) {
   const s = app.store;
   const rows = s.bySpec(spec);
-  if (!rows.length) return setStatus(`No results for ${spec} in this artifact.`, "error");
+  const cov = coverageOf(s.primary, spec);
+  if (!rows.length && !cov.declared) return setStatus(`No results for ${spec} in this artifact.`, "error");
   const cmp = s.comparators[0];
   const a = aggregate(rows);
 
@@ -473,6 +526,8 @@ function renderSpec(spec) {
     if (!cmp) return null;
     const t = s.twin(r, cmp);
     if (!t) {
+      const tc = s.coverageOf(s.twinId(r.cell_id, cmp));
+      if (tc.length) return h("td.cmp", { colspan: 3 }, coveragePill(tc[0]));
       return h("td.muted.cmp.none", { colspan: 3, title: `${backendLabel(cmp)} has no equivalent of this variant` },
         `no ${backendLabel(cmp)} equivalent`);
     }
@@ -546,6 +601,22 @@ function renderSpec(spec) {
       a.failing
         ? h("strong", {}, `${a.failing} contain unexplained disagreements.`)
         : "No unexplained failures were found among the tested inputs."),
+    cov.missing.length
+      ? h("div.callout.warn", {},
+        h("strong", {}, `${cov.missing.length} of ${cov.declared} configurations errored or were never run: ${missingWords(cov)}`),
+        h("p", {}, "One that errored but has a result from another depth is in the table below with that result, marked; the rest have no result, and their accuracy is unknown."),
+        table([{ label: "Configuration" }, "Options", { label: "state" }, { label: "error" }],
+          cov.missing.map((c) => h("tr", {},
+            // One that kept a result from another depth links to that result;
+            // only one with none links to the page that says so.
+            h("td", {}, h("a", { href: cellHref(c.cell_id, rows.find((r) => r.cell_id === c.cell_id)?.output ?? "-") },
+              h("span.dt", {}, c.dtype), " ", c.kind, " ", h("span.muted", {}, c.param_set))),
+            h("td.flags", {}, flagList(c.flags).map((fl) => h("span.chip.flag", {}, fl))),
+            h("td", {}, coveragePill(c)),
+            h("td.small", {}, c.error
+              ? [h("code", { title: c.error }, firstLine(c.error)), h("div.muted", {}, `${c.platform_key}, run ${c.error_run_id}`)]
+              : h("span.muted", {}, "—"))))))
+      : null,
     h("p.note", {}, "Values use base R as the reference; gradients use an analytic gradient reference. Error columns show the maximum finite relative error. Undefined or infinite errors are listed separately in Findings. “Normal” refers to floating-point representation. Signed-zero differences are reported separately."),
     h("div.filters", {},
       filter("precision", "Precision ", [["all", "All precisions"], ["f32", "32-bit (f32)"], ["f64", "64-bit (f64)"]]),
@@ -583,7 +654,18 @@ async function renderCell(cellId, output, zoom) {
   const gen = ++app.gen;
   const s = app.store;
   const r = s.result(cellId, output);
-  if (!r) return setStatus(`No result for ${cellId} / ${output} in this artifact.`, "error");
+  if (!r) {
+    const c = s.coverageOf(cellId)[0];
+    if (!c) return setStatus(`No result for ${cellId} / ${output} in this artifact.`, "error");
+    return put(main(),
+      h("nav.crumbs", {}, h("a", { href: "#/" }, "overview"), " / ", h("a", { href: specHref(c.spec) }, c.spec), " / ",
+        h("span", {}, `${c.dtype} ${c.kind} ${c.param_set}`)),
+      h("h1", {}, c.spec, " ", h("span.dt", {}, c.dtype), " ", h("span.muted", {}, c.kind)),
+      h("div.callout.warn", {},
+        h("strong", {}, c.error ? `This configuration errored at ${c.error_depth} depth` : "This configuration was never run"),
+        c.error ? h("pre.small", {}, c.error) : null,
+        h("p", {}, c.error ? `${c.platform_key}, run ${c.error_run_id}. ` : "", "It has no result in this artifact, so its accuracy is unknown.")));
+  }
   const parts = cellParts(cellId);
   const st = state(r);
 

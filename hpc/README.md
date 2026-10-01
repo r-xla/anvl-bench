@@ -210,14 +210,19 @@ Run export in an allocation if its measured cost or site policy requires it.
    alone is insufficient.
 2. Inspect the merged store with `anvl-sweep status --backends "$BACKENDS"`
    under the same container bindings and `NV_SWEEP_STORE=/sweeps/store` used by
-   `slurm-merge.sbatch`. Compare successful cells at the intended depth with the
-   selected grid. In a reused store, restrict the audit to this submission's
-   run IDs so older results do not conceal missing work.
+   `slurm-merge.sbatch`. It reports, per platform and depth, how many declared
+   cells succeeded on their newest attempt, lists every cell whose newest
+   attempt errored, and tallies reference statuses. In a reused store, a cell
+   this submission never reached still counts as swept from an earlier run at
+   the same depth; a fresh `SWEEP_ROOT` per campaign avoids that.
 3. Inspect validation logs and the selected references' statuses. Distinguish
    failed comparisons, missing records and previous validation records.
 4. Before publishing, inspect the export manifest's platforms, versions, SHAs,
-   depths and coverage. `export.sh` warns about a platform-name mismatch but
-   does not reject it or certify a coherent snapshot.
+   depths and coverage counts (`n_cells_declared`, `n_cells_errored`,
+   `n_cells_not_run`). The export warns when any cell errored or was never run,
+   and the site shows those cells as such; `export.sh` also warns about a
+   platform-name mismatch. None of these warnings rejects the export or
+   certifies a coherent snapshot.
 
 For an interrupted sweep, retain its staging data and identify missing or
 failed work before resubmission. The current scripts do not implement automatic
