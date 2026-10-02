@@ -53,8 +53,8 @@ ARG CACHEBUST=0
 WORKDIR ${R_XLA_ROOT}
 RUN echo "sources fetched at ${CACHEBUST}" \
  && git clone --depth 1 -b ${TENGEN_REF}    https://github.com/r-xla/tengen.git    tengen    \
- && git clone --depth 1 -b ${PJRT_REF}      https://github.com/r-xla/pjrt.git      pjrt      \
  && git clone --depth 1 -b ${XLAMISC_REF}   https://github.com/r-xla/xlamisc.git   xlamisc   \
+ && git clone --depth 1 -b ${PJRT_REF}      https://github.com/r-xla/pjrt.git      pjrt      \
  && git clone --depth 1 -b ${STABLEHLO_REF} https://github.com/r-xla/stablehlo.git stablehlo \
  && git clone --depth 1 -b ${ANVL_REF}      ${ANVL_REPO}                           anvl
 
@@ -84,10 +84,10 @@ RUN Rscript -e 'own <- c("anvl","pjrt","stablehlo","tengen","xlamisc"); \
 # uses it, so a sweep never loads it).
 RUN install2.r --error --skipinstalled nanoparquet cli reticulate DBI duckdb Rmpfr
 
-# ---- the stack, in dependency order (as _setup.sh) ------------------------
+# ---- the stack, in dependency order ------------------------
 RUN R CMD INSTALL ${R_XLA_ROOT}/tengen \
- && R CMD INSTALL ${R_XLA_ROOT}/pjrt \
  && R CMD INSTALL ${R_XLA_ROOT}/xlamisc \
+ && R CMD INSTALL ${R_XLA_ROOT}/pjrt \
  && R CMD INSTALL ${R_XLA_ROOT}/stablehlo \
  && R CMD INSTALL ${R_XLA_ROOT}/anvl
 
