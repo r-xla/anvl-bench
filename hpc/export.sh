@@ -36,7 +36,7 @@ mkdir -p "${EXPORT_DIR}" "${DIST}" "${SWEEP_ROOT}/home" "${SWEEP_ROOT}/tmp"
 "${SINGULARITY}" exec --cleanenv \
   --bind "${SWEEP_ROOT}:/sweeps" \
   --env "NV_SWEEP_STORE=/sweeps/store" \
-  --env "HOME=/sweeps/home" \
+  --home "${SWEEP_ROOT}/home" \
   --env "TMPDIR=/sweeps/tmp" \
   "${SIF}" \
   anvl-sweep export --out /sweeps/export --backends "${BACKENDS}" \

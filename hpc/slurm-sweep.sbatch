@@ -59,7 +59,9 @@ echo "== shard ${SLURM_ARRAY_TASK_ID}/${SHARDS} on $(hostname)"
 
 # HOME and TMPDIR are pointed at the bind mount deliberately: R, reticulate and
 # XLA all write caches under HOME, and a quota'd home directory on a shared
-# filesystem is the classic way for task 37 of 40 to die at hour six.
+# filesystem is the classic way for task 37 of 40 to die at hour six. HOME
+# has to be set with --home: Singularity refuses `--env HOME=...` with only a
+# warning in the .err file and leaves HOME as your real home directory.
 #
 # The thread-count variables are pinned to 1, not to CPUS_PER_TASK: they reach
 # R's BLAS, which this workload barely touches, and a BLAS pool sized to the
@@ -68,7 +70,7 @@ echo "== shard ${SLURM_ARRAY_TASK_ID}/${SHARDS} on $(hostname)"
   --bind "${SWEEP_ROOT}:/sweeps" \
   --env "NV_SWEEP_STORE=/sweeps/parts/${SLURM_ARRAY_JOB_ID}" \
   --env "NV_SWEEP_DEVICE=cpu" \
-  --env "HOME=/sweeps/home" \
+  --home "${SWEEP_ROOT}/home" \
   --env "TMPDIR=/sweeps/tmp" \
   --env "OMP_NUM_THREADS=1" \
   --env "OPENBLAS_NUM_THREADS=1" \

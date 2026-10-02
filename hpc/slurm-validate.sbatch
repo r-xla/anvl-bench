@@ -38,7 +38,7 @@ echo "== validation shard ${SLURM_ARRAY_TASK_ID}/${VALIDATE_SHARDS} on $(hostnam
 "${SRUN[@]}" "${SINGULARITY}" exec --cleanenv \
   --bind "${SWEEP_ROOT}:/sweeps" \
   --env "NV_SWEEP_STORE=/sweeps/store" \
-  --env "HOME=/sweeps/home" \
+  --home "${SWEEP_ROOT}/home" \
   --env "TMPDIR=/sweeps/tmp" \
   --env "OMP_NUM_THREADS=1" \
   --env "OPENBLAS_NUM_THREADS=1" \

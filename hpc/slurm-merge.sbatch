@@ -25,7 +25,7 @@ source "${CONFIG:-${SLURM_SUBMIT_DIR}/config.sh}"
   --bind "${SWEEP_ROOT}:/sweeps" \
   --env "NV_SWEEP_STORE=/sweeps/store" \
   --env "NV_SWEEP_DEVICE=cpu" \
-  --env "HOME=/sweeps/home" \
+  --home "${SWEEP_ROOT}/home" \
   --env "TMPDIR=/sweeps/tmp" \
   "${SIF}" \
   anvl-sweep merge --from "/sweeps/parts/${ARRAY_JOB_ID}"
@@ -33,7 +33,7 @@ source "${CONFIG:-${SLURM_SUBMIT_DIR}/config.sh}"
 "${SINGULARITY}" exec --cleanenv \
   --bind "${SWEEP_ROOT}:/sweeps" \
   --env "NV_SWEEP_STORE=/sweeps/store" \
-  --env "HOME=/sweeps/home" \
+  --home "${SWEEP_ROOT}/home" \
   --env "TMPDIR=/sweeps/tmp" \
   "${SIF}" \
   anvl-sweep status

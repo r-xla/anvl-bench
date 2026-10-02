@@ -32,7 +32,7 @@ mkdir -p "${LOGS}" "${SWEEP_ROOT}/parts" "${SWEEP_ROOT}/store" \
 # ten seconds.
 if [[ "${1:-}" == "--dry-run" ]]; then
   "${SINGULARITY}" exec --cleanenv --bind "${SWEEP_ROOT}:/sweeps" \
-    --env "NV_SWEEP_STORE=/sweeps/store" --env "HOME=/sweeps/home" \
+    --env "NV_SWEEP_STORE=/sweeps/store" --home "${SWEEP_ROOT}/home" \
     "${SIF}" \
     anvl-sweep run --dry-run --depth "${DEPTH}" --backends "${BACKENDS}" \
       ${FILTER:+--filter "${FILTER}"} --shard 1 --shards "${SHARDS}"

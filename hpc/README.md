@@ -47,7 +47,7 @@ export.sh            merged store -> anvl-bench release ZIP
 source config.sh && mkdir -p "$SWEEP_ROOT/home" "$SWEEP_ROOT/tmp"
 "${SINGULARITY}" exec --cleanenv --bind "$SWEEP_ROOT:/sweeps" \
   --env NV_SWEEP_STORE=/sweeps/selftest-store \
-  --env HOME=/sweeps/home --env TMPDIR=/sweeps/tmp \
+  --home "$SWEEP_ROOT/home" --env TMPDIR=/sweeps/tmp \
   "$SIF" anvl-sweep selftest
 # Keep this separate from the analysis store; remove it when no longer needed.
 
@@ -96,7 +96,11 @@ $SWEEP_ROOT/
 
 Put it on scratch or project space. `HOME` and `TMPDIR` are redirected there on
 purpose: R, reticulate and XLA all write caches under `HOME`, and a quota'd home
-directory is the classic way for task 37 of 40 to die at hour six.
+directory is the classic way for task 37 of 40 to die at hour six. The scripts
+set `HOME` with `--home "$SWEEP_ROOT/home"`, which mounts that directory at its
+own path inside the container. `--env HOME=...` does not work: Singularity
+ignores it, prints `Overriding HOME environment variable with SINGULARITYENV_HOME
+is not permitted` to stderr, and leaves `HOME` as your real home directory.
 
 Only the **staging directory** is keyed by array job ID. All submissions merge
 into the same `store/`, so versions, depths and runs accumulate there. Set
