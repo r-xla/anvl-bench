@@ -26,6 +26,7 @@ Dockerfile           the whole r-xla stack + the harness + JAX, from GitHub
 build.sh             build (amd64) -> save -> scp -> .sif
 submit.sh            submit sweep -> merge -> validation, each waiting on the last
 calibrate.sh         one shard at quick depth, then its CPU efficiency
+check.sh             logs, coverage and validation status, before export
 slurm-sweep.sbatch     1. one array task per shard of the grid
 slurm-merge.sbatch     2. fold the shards into the analysis store
 slurm-validate.sbatch  3. one array task per shard of the references, checked
@@ -56,7 +57,8 @@ source config.sh && mkdir -p "$SWEEP_ROOT/home" "$SWEEP_ROOT/tmp"
 ./submit.sh --dry-run     # what shard 1 would take; runs nothing
 ./submit.sh               # sweep array -> merge -> validation array
 
-# 4. inspect logs, coverage and validation status (see below), then export
+# 4. check logs, coverage and validation status, then export
+./check.sh                # exits 0 when nothing needs attention
 ./export.sh               # -> $SWEEP_ROOT/dist/linux-x86_64-cpu.zip
 ```
 
@@ -204,6 +206,25 @@ Merge, validation and export can have different resource needs from sweeps.
 Run export in an allocation if its measured cost or site policy requires it.
 
 ## Checking completion and recovering work
+
+`./check.sh` runs checks 1–3 below, and prints
+one summary that ends in either "nothing failed" or a count of problems:
+
+```bash
+./check.sh                          # newest sweep and validation arrays
+./check.sh <sweep id> [<val id>]    # specific ones
+CHECK_VERBOSE=1 ./check.sh          # also print the full anvl-sweep status
+```
+
+It takes the array IDs from the log file names in `$SWEEP_ROOT/logs`. It
+ignores `calib-*` logs, and after a `--validate-only` retry it uses the newer
+validation array. It lists every shard that died, every cell that errored, every
+reference that failed, and the store's coverage row for `ARTIFACT_ID` at
+`DEPTH`. It exits 1 if it finds any problem. Use it to decide whether to
+export: `export.sh` does not run it or depend on it. It does not read the
+export manifest (check 4), which only exists after `export.sh`.
+
+The checks, which you can also run by hand:
 
 1. Inspect scheduler state and sweep logs. Every intended cell should report
    `OK`; inspect `ERROR` entries and the final per-task counts. A zero exit code
