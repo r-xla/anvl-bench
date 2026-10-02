@@ -10,8 +10,8 @@ IMAGE_NAME="anvl-sweeps"
 # A LITERAL, never $(date): config.sh is sourced by every script, so a computed
 # date tag changes the .sif path at midnight and the image built yesterday
 # stops being found. Bump it by hand when you build a new image, or override it
-# for one command:  IMAGE_TAG=20260927 ./build.sh all
-IMAGE_TAG="${IMAGE_TAG:-20260927}"
+# for one command:  IMAGE_TAG=v0.5.1 ./build.sh all
+IMAGE_TAG="${IMAGE_TAG:-v0.5.1}"
 DOCKER_PLATFORM="linux/amd64"        # the cluster's arch, not the Mac's
 ANVL_REF="sweep-benchmarks"          # branch of louisaslett/anvl to build
 ANVL_REPO="https://github.com/louisaslett/anvl.git"
@@ -20,8 +20,8 @@ ANVL_REPO="https://github.com/louisaslett/anvl.git"
 DIST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/dist"
 
 # ---- cluster --------------------------------------------------------------
-REMOTE_HOST="user@host"                   # CHANGE ME
-REMOTE_DIR="/home/user/anvl-sweeps"       # CHANGE ME (where the .tar and .sif live)
+REMOTE_HOST="cqlx43@hpc"
+REMOTE_DIR="/home/cqlx43/anvl-sweeps"       # (where the .tar and .sif live)
 SIF="${REMOTE_DIR}/${IMAGE_NAME}-${IMAGE_TAG}.sif"
 
 # Bind-mounted working space, on the *cluster* filesystem. Everything the run
@@ -30,7 +30,7 @@ SIF="${REMOTE_DIR}/${IMAGE_NAME}-${IMAGE_TAG}.sif"
 # store is tens of GB before export.
 #
 # It appears inside the container as /sweeps.
-SWEEP_ROOT="/nobackup/user/anvl-sweeps"  # CHANGE ME 
+SWEEP_ROOT="/nobackup/cqlx43/anvl-sweeps"
 
 SINGULARITY="singularity"            # or "apptainer"
 
