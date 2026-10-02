@@ -69,6 +69,7 @@ step_build() {
     --platform "${DOCKER_PLATFORM}" \
     --build-arg "ANVL_REPO=${ANVL_REPO}" \
     --build-arg "ANVL_REF=${ANVL_REF}" \
+    --build-arg "CACHEBUST=$(date +%s)" \
     --tag "${IMAGE}" \
     --load \
     .

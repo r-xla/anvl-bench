@@ -45,8 +45,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN git config --system --add safe.directory '*'
 
 # ---- sources --------------------------------------------------------------
+# Docker caches a RUN by its text, not by what a branch points to now, so
+# without this the clone below (and every layer after it) is reused from the
+# first build forever. build.sh passes a fresh value on every build, which
+# forces a fresh clone and rebuild of the stack; the layers above stay cached.
+ARG CACHEBUST=0
 WORKDIR ${R_XLA_ROOT}
-RUN git clone --depth 1 -b ${TENGEN_REF}    https://github.com/r-xla/tengen.git    tengen    \
+RUN echo "sources fetched at ${CACHEBUST}" \
+ && git clone --depth 1 -b ${TENGEN_REF}    https://github.com/r-xla/tengen.git    tengen    \
  && git clone --depth 1 -b ${PJRT_REF}      https://github.com/r-xla/pjrt.git      pjrt      \
  && git clone --depth 1 -b ${XLAMISC_REF}   https://github.com/r-xla/xlamisc.git   xlamisc   \
  && git clone --depth 1 -b ${STABLEHLO_REF} https://github.com/r-xla/stablehlo.git stablehlo \
