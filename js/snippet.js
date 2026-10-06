@@ -95,14 +95,20 @@ function hexToNum(s) {
 
 // --- what each function is ----------------------------------------------
 
-// The parameter sets as the harness writes them (NORM_PARAMS, UNIF_INTERVALS):
-// the backend is handed these doubles, whatever the cell's precision.
-const PARAM_SETS = {
-  standard: { mean: 0, sd: 1 },
-  shifted: { mean: -Math.PI, sd: 2 * Math.PI },
-  unit: { min: 0, max: 1 },
-  wide: { min: -Math.PI, max: 2 * Math.PI },
-};
+// The parameter sets as the harness writes them (NORM_PARAMS, UNIF_INTERVALS,
+// EXP_PARAMS), per family since set names repeat across families: the backend
+// is handed these doubles, whatever the cell's precision. Each is the same
+// correctly rounded product of doubles in JS as in R.
+const NORM_SETS = { standard: { mean: 0, sd: 1 }, shifted: { mean: -Math.PI, sd: 2 * Math.PI } };
+const UNIF_SETS = { unit: { min: 0, max: 1 }, wide: { min: -Math.PI, max: 2 * Math.PI } };
+const EXP_SETS = { standard: { rate: 1 }, small: { rate: Math.PI * 1e-10 }, large: { rate: Math.PI * 1e10 } };
+
+// Each parameter's default in the anvl and base R signatures, and its name in
+// the MPFR truth. Python avoids min and max, which would shadow the builtins
+// the scoring uses.
+const DEFAULT = { mean: 0, sd: 1, min: 0, max: 1, rate: 1 };
+const MP_NAME = { mean: "M", sd: "S", min: "A", max: "B", rate: "R" };
+const PY_NAME = { min: "mn", max: "mx" };
 
 const NAMED = [
   [Math.PI, "pi", "math.pi"], [-Math.PI, "-pi", "-math.pi"],
@@ -113,13 +119,23 @@ const pyParam = (v) => NAMED.find(([n]) => n === v)?.[2] ?? pyNum(v);
 
 const NORM = ["mean", "sd"];
 const UNIF = ["min", "max"];
+const EXPO = ["rate"];
+// jaxArgs: the JAX call's trailing arguments, in the harness's parameterisation
+// (expon takes scale = 1/rate, formed inside the traced function as the
+// harness does, so d/drate is comparable with anvl's).
+const NORM_JAX = { jax: "norm", jaxArgs: "mean, sd", sets: NORM_SETS };
+const UNIF_JAX = { jax: "uniform", jaxArgs: "mn, mx - mn", sets: UNIF_SETS };
+const EXPO_JAX = { jax: "expon", jaxArgs: "scale=1 / rate", sets: EXP_SETS };
 const SPECS = {
-  nv_dnorm: { arg: "x", params: NORM, base: "dnorm", flags: ["log"], jax: "norm" },
-  nv_pnorm: { arg: "q", params: NORM, base: "pnorm", flags: ["lower_tail", "log_p"], jax: "norm" },
-  nv_qnorm: { arg: "p", params: NORM, base: "qnorm", flags: ["lower_tail", "log_p"], jax: "norm" },
-  nv_dunif: { arg: "x", params: UNIF, base: "dunif", flags: ["log"], jax: "uniform" },
-  nv_punif: { arg: "q", params: UNIF, base: "punif", flags: ["lower_tail", "log_p"], jax: "uniform" },
-  nv_qunif: { arg: "p", params: UNIF, base: "qunif", flags: ["lower_tail", "log_p"], jax: "uniform" },
+  nv_dnorm: { arg: "x", params: NORM, base: "dnorm", flags: ["log"], ...NORM_JAX },
+  nv_pnorm: { arg: "q", params: NORM, base: "pnorm", flags: ["lower_tail", "log_p"], ...NORM_JAX },
+  nv_qnorm: { arg: "p", params: NORM, base: "qnorm", flags: ["lower_tail", "log_p"], ...NORM_JAX },
+  nv_dunif: { arg: "x", params: UNIF, base: "dunif", flags: ["log"], ...UNIF_JAX },
+  nv_punif: { arg: "q", params: UNIF, base: "punif", flags: ["lower_tail", "log_p"], ...UNIF_JAX },
+  nv_qunif: { arg: "p", params: UNIF, base: "qunif", flags: ["lower_tail", "log_p"], ...UNIF_JAX },
+  nv_dexp: { arg: "x", params: EXPO, base: "dexp", flags: ["log"], ...EXPO_JAX },
+  nv_pexp: { arg: "q", params: EXPO, base: "pexp", flags: ["lower_tail", "log_p"], ...EXPO_JAX },
+  nv_qexp: { arg: "p", params: EXPO, base: "qexp", flags: ["lower_tail", "log_p"], ...EXPO_JAX },
 };
 
 const BASE_FLAG = { log: "log", lower_tail: "lower.tail", log_p: "log.p" };
@@ -143,6 +159,9 @@ function jaxFn(spec, f) {
     case "nv_dunif": return f.log ? "uniform.logpdf" : "uniform.pdf";
     case "nv_punif": return "uniform.cdf";
     case "nv_qunif": return "uniform.ppf";
+    case "nv_dexp": return f.log ? "expon.logpdf" : "expon.pdf";
+    case "nv_pexp": return lower ? (f.log_p ? "expon.logcdf" : "expon.cdf") : (f.log_p ? "expon.logsf" : "expon.sf");
+    case "nv_qexp": return "expon.ppf";  // the only quantile JAX has; the harness pairs no other variant
   }
   return null;
 }
@@ -150,11 +169,12 @@ function jaxFn(spec, f) {
 // --- the 256-bit truth ----------------------------------------------------
 //
 // Ported from the harness's own MPFR truths (ref_grad_mpfr, ref_stable_mpfr
-// and the helpers in _normal.R), for one finite input. The value truths for
-// which the harness has no MPFR function are the same mathematics. Parameters
-// are the reference's (X, and M/S or A/B, all exact mpfr of doubles).
+// and the helpers in _normal.R and _exponential.R), for one finite input. The
+// value truths for which the harness has no MPFR function are the same
+// mathematics. Parameters are the reference's (X, and M/S, A/B or R, all
+// exact mpfr of doubles).
 
-const NORMAL_HELPERS = {
+const HELPERS = {
   phi: `phi <- function(z) exp(-z^2 / 2) / sqrt(2 * Rmpfr::Const("pi", ${PREC}))`,
   // phi(z)/Phi(z); the continued fraction below -30, where Phi would need exp()
   imills: `imills <- function(z) {  # phi(z) / Phi(z); a continued fraction below -30
@@ -166,6 +186,10 @@ const NORMAL_HELPERS = {
   logPhi: `log_Phi <- function(z) {  # log Phi(z), without exp() in the far lower tail
   if (z < -30) return(-z^2 / 2 - log(sqrt(2 * Rmpfr::Const("pi", ${PREC}))) - log(imills(z)))
   if (z > 0) log1p(-Rmpfr::pnorm(-z)) else log(Rmpfr::pnorm(z))
+}`,
+  // mp_log1mexp: even at 256 bits 1 - exp(v) rounds to 1 below v ~ -177
+  log1mexp: `log1mexp <- function(v) {  # log(1 - exp(v)), v <= 0, split at -log 2
+  if (v > -log(2)) log(-expm1(v)) else log1p(-exp(v))
 }`,
 };
 
@@ -270,9 +294,51 @@ function truthR(spec, kind, output, f) {
       const d = { p: dp, min: u1, max: u }[output];
       expr = `if (${inRange}) ${d} else Rmpfr::mpfr(0, ${PREC})`;
     }
+  } else if (spec === "nv_dexp") {
+    // the support is closed, x == 0 included, as in nv_dexp()
+    L.push("t <- R * X");
+    if (kind === "value") {
+      expr = f.log ? `if (x >= 0) log(R) - t else Rmpfr::mpfr(-Inf, ${PREC})`
+        : `if (x >= 0) R * exp(-t) else Rmpfr::mpfr(0, ${PREC})`;
+    } else {
+      const d = f.log
+        ? { x: "-R", rate: "(1 - t) / R" }[output]
+        : { x: "-(R * R) * exp(-t)", rate: "(1 - t) * exp(-t)" }[output];
+      expr = `if (x >= 0) ${d} else Rmpfr::mpfr(0, ${PREC})`;
+    }
+  } else if (spec === "nv_pexp") {
+    L.push("t <- R * X");
+    if (kind === "value") {
+      if (f.log_p && lower) h.add("log1mexp");
+      const at0 = lower ? (f.log_p ? "-Inf" : "0") : (f.log_p ? "0" : "1");
+      const v = lower ? (f.log_p ? "log1mexp(-t)" : "-expm1(-t)") : (f.log_p ? "-t" : "exp(-t)");
+      expr = `if (x <= 0) Rmpfr::mpfr(${at0}, ${PREC}) else ${v}`;
+    } else {
+      // every derivative is 0 at and below q = 0, as in the harness's reference
+      let d;
+      if (!f.log_p) d = { q: `${S}R * exp(-t)`, rate: `${S}X * exp(-t)` }[output];
+      else if (!lower) d = { q: "-R", rate: "-X" }[output];
+      else d = { q: "R / expm1(t)", rate: "X / expm1(t)" }[output];
+      expr = `if (x > 0) ${d} else Rmpfr::mpfr(0, ${PREC})`;
+    }
+  } else if (spec === "nv_qexp") {
+    // x = -L / rate, L the log of the upper-tail probability
+    const inRange = f.log_p ? "x <= 0" : "x >= 0 && x <= 1";
+    if (f.log_p && lower) h.add("log1mexp");
+    const Lx = lower ? (f.log_p ? "log1mexp(X)" : "log1p(-X)") : (f.log_p ? "X" : "log(X)");
+    if (kind === "value") {
+      expr = `if (${inRange}) -(${Lx}) / R else Rmpfr::mpfr(NaN, ${PREC})`;
+    } else {
+      // one-sided at the ends of the range: the limits from inside it
+      const dp = f.log_p
+        ? (lower ? "1 / (R * expm1(abs(X)))" : "-1 / R")
+        : (lower ? "1 / (R * (1 - X))" : "-1 / (R * abs(X))");
+      const d = { p: dp, rate: `${Lx} / (R * R)` }[output];
+      expr = `if (${inRange}) ${d} else Rmpfr::mpfr(0, ${PREC})`;
+    }
   }
-  const order = ["phi", "imills", "logPhi"];
-  return { helpers: order.filter((k) => h.has(k)).map((k) => NORMAL_HELPERS[k]), lines: L, expr };
+  const order = ["phi", "imills", "logPhi", "log1mexp"];
+  return { helpers: order.filter((k) => h.has(k)).map((k) => HELPERS[k]), lines: L, expr };
 }
 
 // --- the scoring, as the harness does it ------------------------------------
@@ -348,15 +414,15 @@ export function snippet(ctx) {
 
   // Parameters: the backend's (full precision) and the reference's (summary).
   const refP = parseHexParams(r.ref_params);
-  let beP = PARAM_SETS[parts.param_set];
+  let beP = sp.sets[parts.param_set];
   const round = dtype === "f32" ? Math.fround : (v) => v;
   if (!beP || !sp.params.every((k) => k in beP && k in refP && round(beP[k]) === refP[k])) beP = refP;
   const differ = sp.params.some((k) => beP[k] !== refP[k]);
-  const isDefault = sp.params.every((k) => beP[k] === (k === "sd" || k === "max" ? 1 : 0));
+  const isDefault = sp.params.every((k) => beP[k] === DEFAULT[k]);
+  const plain = isDefault && !differ;  // the call can leave every parameter at its default
 
-  const [p1, p2] = sp.params;
-  // Python names: min and max would shadow the builtins the scoring uses.
-  const [q1, q2] = sp.params === UNIF ? ["mn", "mx"] : sp.params;
+  const P = sp.params;
+  const pyName = (k) => PY_NAME[k] ?? k;
   const flagsR = sp.flags.map((k) => `${k} = ${f[k] ? "TRUE" : "FALSE"}`).join(", ");
   const baseFlags = sp.flags.map((k) => `${BASE_FLAG[k]} = ${f[k] ? "TRUE" : "FALSE"}`).join(", ");
   const prec = dtype === "f32" ? "23L, -126L" : "52L, -1022L";
@@ -383,7 +449,7 @@ export function snippet(ctx) {
   // How the reference's parameters are named in R: literals where the snippet
   // leaves the function's defaults implicit (a bare `mean` would be base::mean).
   const refExpr = (k) => (differ ? `ref_${k}` : isDefault ? rParam(refP[k]) : k);
-  const refLits = sp.params.map((k) => `${k === p1 ? (sp.params === NORM ? "M" : "A") : (sp.params === NORM ? "S" : "B")} <- Rmpfr::mpfr(${refExpr(k)}, ${PREC})`);
+  const refLits = P.map((k) => `${MP_NAME[k]} <- Rmpfr::mpfr(${refExpr(k)}, ${PREC})`);
   const refDouble = sp.params === UNIF ? [`a <- ${refExpr("min")}; b <- ${refExpr("max")}`] : [];
   const truthBlock = [
     `# the true value, to ${PREC} bits (Rmpfr); evaluated only at a finite input`,
@@ -398,33 +464,33 @@ export function snippet(ctx) {
     `}`,
   ];
 
+  const pyAssign = () => `${P.map(pyName).join(", ")} = ${P.map((k) => pyParam(beP[k])).join(", ")}`;
   const paramLines = (lang) => {
-    if (isDefault && !differ) return lang === "R" ? [] : [`${q1}, ${q2} = ${pyParam(beP[p1])}, ${pyParam(beP[p2])}`];
+    if (plain) return lang === "R" ? [] : [pyAssign()];
     if (lang === "R") {
-      const out = [`${p1} <- ${rParam(beP[p1])}; ${p2} <- ${rParam(beP[p2])}${differ ? "  # as the harness passes them to the backend, which rounds them to f32" : ""}`];
-      if (differ) out.push(`ref_${p1} <- ${rNum(refP[p1])}; ref_${p2} <- ${rNum(refP[p2])}  # the same rounded to f32: what the reference is given`);
+      const out = [`${P.map((k) => `${k} <- ${rParam(beP[k])}`).join("; ")}${differ ? "  # as the harness passes them to the backend, which rounds them to f32" : ""}`];
+      if (differ) out.push(`${P.map((k) => `ref_${k} <- ${rNum(refP[k])}`).join("; ")}  # the same rounded to f32: what the reference is given`);
       return out;
     }
-    return [`${q1}, ${q2} = ${pyParam(beP[p1])}, ${pyParam(beP[p2])}${differ ? "  # as the harness passes them; rounded to f32 by the array's dtype" : ""}`];
+    return [`${pyAssign()}${differ ? "  # as the harness passes them; rounded to f32 by the array's dtype" : ""}`];
   };
-  const refArgs = (isDefault && !differ) ? "" : differ ? `, ref_${p1}, ref_${p2}` : `, ${p1}, ${p2}`;
+  const refArgs = plain ? "" : P.map((k) => `, ${differ ? "ref_" : ""}${k}`).join("");
   const baseCall = `${sp.base}(x${refArgs}, ${baseFlags})`;
   const xComment = rNum(x) === dec(x) ? "" : `  # ${dec(x)}, written exactly: R's decimal parser is not correctly rounded everywhere`;
 
   // anvl's own evaluation, which the JAX snippet runs too: anvl is the
   // subject, and where JAX is out is exactly where anvl is worth a look.
-  const beArgs = isDefault && !differ ? "" : `, ${p1}, ${p2}`;
+  const beArgs = plain ? "" : P.map((k) => `, ${k}`).join("");
   const call = kind === "value"
       ? [`anvl_value <- as.double(${r.spec}(nv_array(rep(x, n), dtype = "${dtype}")${beArgs}, ${flagsR}))[1]`]
       : [
         `grad_fn <- jit(gradient(`,
-        `  \\(${sp.arg}, ${p1}, ${p2}) sum(${r.spec}(${sp.arg}, ${p1}, ${p2}, ${flagsR})),`,
-        `  wrt = c("${sp.arg}", "${p1}", "${p2}")`,
+        `  \\(${[sp.arg, ...P].join(", ")}) sum(${r.spec}(${[sp.arg, ...P].join(", ")}, ${flagsR})),`,
+        `  wrt = c(${[sp.arg, ...P].map((k) => `"${k}"`).join(", ")})`,
         `))`,
         `g <- grad_fn(`,
         `  nv_array(rep(x, n), dtype = "${dtype}"),`,
-        `  nv_array(rep(${isDefault && !differ ? rParam(beP[p1]) : p1}, n), dtype = "${dtype}"),`,
-        `  nv_array(rep(${isDefault && !differ ? rParam(beP[p2]) : p2}, n), dtype = "${dtype}")`,
+        ...P.map((k, i) => `  nv_array(rep(${plain ? rParam(beP[k]) : k}, n), dtype = "${dtype}")${i < P.length - 1 ? "," : ""}`),
         `)`,
         `anvl_value <- as.double(g$${output})[1]`,
       ];
@@ -456,16 +522,20 @@ export function snippet(ctx) {
 
   // JAX: the value from Python, base R and the truth from R through Rscript.
   const fn = jaxFn(r.spec, f);
-  const unif = sp.params === UNIF;
   const jdt = dtype === "f32" ? "jnp.float32" : "jnp.float64";
+  const pyParams = P.map(pyName).join(", ");
+  const restated = {
+    uniform: "  # restated in (min, max) before differentiating",
+    expon: "  # in terms of the rate, as the harness differentiates it",
+  }[sp.jax];
   const jaxCall = kind === "value"
-    ? [`jax_value = float(${fn}(jnp.full(n, x, dtype=${jdt}), ${unif ? "mn, mx - mn" : "mean, sd"})[0])`]
+    ? [`jax_value = float(${fn}(jnp.full(n, x, dtype=${jdt}), ${sp.jaxArgs})[0])`]
     : [
-      unif
-        ? `f = lambda ${sp.arg}, mn, mx: ${fn}(${sp.arg}, mn, mx - mn)  # restated in (min, max) before differentiating`
+      restated
+        ? `f = lambda ${sp.arg}, ${pyParams}: ${fn}(${sp.arg}, ${sp.jaxArgs})${restated}`
         : `f = ${fn}`,
-      `g = jax.jit(jax.vmap(jax.grad(f, argnums=${{ [sp.arg]: 0, [p1]: 1, [p2]: 2 }[output]}), in_axes=(0, None, None)))`,
-      `jax_value = float(g(jnp.full(n, x, dtype=${jdt}), ${q1}, ${q2})[0])`,
+      `g = jax.jit(jax.vmap(jax.grad(f, argnums=${[sp.arg, ...P].indexOf(output)}), in_axes=(0, ${P.map(() => "None").join(", ")})))`,
+      `jax_value = float(g(jnp.full(n, x, dtype=${jdt}), ${pyParams})[0])`,
     ];
   const rCode = [
     "library(anvl)",
