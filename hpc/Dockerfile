@@ -19,7 +19,7 @@ FROM rocker/r-ver:${R_VERSION}
 
 # Which sources to build. Override any of these with --build-arg.
 ARG ANVL_REPO=https://github.com/louisaslett/anvl.git
-ARG ANVL_REF=sweep-benchmarks
+ARG ANVL_REF=binom-dist
 ARG PJRT_REF=main
 ARG STABLEHLO_REF=main
 ARG TENGEN_REF=main

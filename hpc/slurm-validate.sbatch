@@ -30,7 +30,7 @@ source "${CONFIG:-${SLURM_SUBMIT_DIR}/config.sh}"
 
 mkdir -p "${SWEEP_ROOT}/tmp" "${SWEEP_ROOT}/home"
 
-# Bound to its CPU like the sweep tasks (see slurm-sweep.sbatch); MPFR is
+# Bound to its CPU like the workers (see slurm-work.sbatch); MPFR is
 # single-threaded, so one core is all a task uses.
 SRUN=(srun --cpus-per-task="${SLURM_CPUS_PER_TASK:-1}" --cpu-bind=cores)
 

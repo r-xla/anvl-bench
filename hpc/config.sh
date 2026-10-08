@@ -13,7 +13,8 @@ IMAGE_NAME="anvl-sweeps"
 # for one command:  IMAGE_TAG=v0.5.1 ./build.sh all
 IMAGE_TAG="${IMAGE_TAG:-v0.5.1}"
 DOCKER_PLATFORM="linux/amd64"        # the cluster's arch, not the Mac's
-ANVL_REF="sweep-benchmarks"          # branch of louisaslett/anvl to build
+ANVL_REF="binom-dist"                # branch of louisaslett/anvl to build; it
+                                     # must carry the harness's work queue
 ANVL_REPO="https://github.com/louisaslett/anvl.git"
 
 # Local scratch for the exported tarball, on this Mac.
@@ -39,11 +40,35 @@ PARTITION="shared"                   # (queue name)
 ACCOUNT=""                           # CHANGE ME or leave empty to omit
 QOS=""                               # optional; leave empty to omit
 
-SHARDS=320                            # array tasks; see README on sizing
+# The sweep is a pool of WORKERS long-lived workers taking parts of cells from
+# a queue until none are left (see README, "How the work is divided"). Each
+# worker stops claiming parts it cannot finish inside WALLTIME, so a shorter
+# walltime costs nothing but more, shorter jobs -- pick what your partition
+# schedules quickly.
+WORKERS=64                           # array tasks, one worker each
+WORKER_LIMIT=""                      # optional: at most this many at once (%K)
 CPUS_PER_TASK=1
-MEM_PER_TASK="2G"
-WALLTIME="72:00:00"                  # per array task
+MEM_PER_TASK="4G"                    # a worker compiles many cells in its life
+WALLTIME="24:00:00"                  # per worker
 MERGE_WALLTIME="04:00:00"
+
+# How cells are cut into parts. A cell is cut into parts of about UNIT_MINUTES
+# of compute, from what it cost before (COSTS); a cell never measured is cut
+# into MAX_PARTS. A claim whose heartbeat is older than STALE_MINUTES belongs to
+# a dead worker and is taken over: keep it above the slowest single chunk.
+UNIT_MINUTES=15
+MAX_PARTS=64
+STALE_MINUTES=30
+# What cells cost before, to size their parts: paths INSIDE the container
+# (under /sweeps), comma-separated, IN ORDER OF PRIORITY -- a later source
+# overrides earlier ones for the cells it measured. Costs only decide how
+# finely cells are cut; they never change a result. The usual list:
+#   1. optionally, the last release ZIP, copied into $SWEEP_ROOT/costs/
+#   2. the store ./calibrate.sh prints: a smoke sweep of the whole grid, or of
+#      just the functions that are new or changed since that release
+# Empty = no costs: every cell is cut into MAX_PARTS, which works but is
+# coarse. See README, "Sizing the pool".
+COSTS="/sweeps/parts/calib-20261008T175501"
 
 # The validation array (slurm-validate.sbatch): after the merge, each task
 # checks a share of the references against 256-bit MPFR. Units are distinct
@@ -60,9 +85,6 @@ VALIDATE_MEM="8G"
 DEPTH="full"                         # smoke | quick | full
 BACKENDS="anvl,jax"                  # "anvl" alone halves the grid
 FILTER=""                            # e.g. "spec=nv_qnorm"; empty = everything
-JOBS=1                               # forked workers *within* one array task;
-                                     # keep at 1 unless CPUS_PER_TASK > 1 and
-                                     # you have measured that it helps
 
 # ---- export ---------------------------------------------------------------
 # Becomes the artifact id and the zip name in anvl-bench's release layout.
@@ -72,7 +94,7 @@ ARTIFACT_ID="linux-x86_64-cpu"
 # ---- guard ----------------------------------------------------------------
 # Called before anything is submitted. Without it a wrong IMAGE_TAG queues the
 # whole array against a path that does not exist and every task fails at
-# launch, minutes later and 320 times over.
+# launch, minutes later and once per worker.
 require_sif() {
   if [[ ! -f "${SIF}" ]]; then
     echo "no image at ${SIF}" >&2
@@ -82,3 +104,4 @@ require_sif() {
     exit 1
   fi
 }
+
