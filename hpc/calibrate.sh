@@ -20,8 +20,11 @@
 #
 # and list its store in COSTS *after* the release ZIP, so that it overrides it.
 #
-# The run goes into its own queue and staging store (calib-<time>), never into
-# the analysis store, so a calibration can never contaminate a campaign.
+# Calibrate inside the campaign's SWEEP_ROOT -- a fresh one for a new
+# campaign, set up before calibrating -- since the container sees nothing
+# outside it. The run goes into its own queue and staging store
+# ($SWEEP_ROOT/queues/calib-<time>, $SWEEP_ROOT/parts/calib-<time>), never
+# into the analysis store, so a calibration can never contaminate a campaign.
 # ---------------------------------------------------------------------------
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
@@ -89,13 +92,24 @@ report)
   echo
   sacct -j "${JOB}" --format=JobID%20,State,Elapsed,TotalCPU,AllocCPUS,MaxRSS
 
+  # The store the calibration wrote, and the COSTS line that uses it. COSTS
+  # holds container paths: every script mounts $SWEEP_ROOT at /sweeps, so the
+  # folder on the cluster's own filesystem is $SWEEP_ROOT/parts/<name>.
   q=$(grep -lx "${JOB}" "${SWEEP_ROOT}"/queues/calib-*/arrays 2>/dev/null | head -n 1 || true)
   if [[ -n "${q}" ]]; then
     name=$(basename "$(dirname "${q}")")
+    path="/sweeps/parts/${name}"
     echo
-    echo "costs: /sweeps/parts/${name}"
-    echo "  add it to COSTS in config.sh for the next ./submit.sh -- last, so that it"
-    echo "  overrides any earlier source for the cells it measured"
+    echo "costs measured into ${SWEEP_ROOT}/parts/${name}"
+    echo "  (seen as ${path} inside the container, which is how COSTS names it)"
+    if [[ ",${COSTS}," == *",${path},"* ]]; then
+      echo "  COSTS in config.sh already lists it"
+    else
+      echo "  for the next ./submit.sh, set in config.sh -- last, so that it overrides"
+      echo "  any earlier source for the cells it measured:"
+      echo
+      echo "    COSTS=\"${COSTS:+${COSTS},}${path}\""
+    fi
   fi
 
   # Efficiency = CPU time used / (elapsed x cores allocated), over every task

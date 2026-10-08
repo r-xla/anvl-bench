@@ -39,7 +39,9 @@ export.sh            merged store -> anvl-bench release ZIP
 ## The workflow
 
 ```bash
-# 1. on the Mac — edit config.sh first, including a new IMAGE_TAG
+# 1. on the Mac — edit config.sh first, including a new IMAGE_TAG and, for a
+#    new campaign, a SWEEP_ROOT that does not exist yet (see "Where things are
+#    written"); everything from step 2 on writes into it
 ./build.sh all            # or: build / save / ship / sif, one at a time
                           # (ship and sif open one ssh connection in the
                           #  foreground -- MFA shows here -- and share it;
@@ -53,9 +55,11 @@ source config.sh && mkdir -p "$SWEEP_ROOT/home" "$SWEEP_ROOT/tmp"
   "$SIF" anvl-sweep selftest
 # Keep this separate from the analysis store; remove it when no longer needed.
 
-# 3. still on the cluster
-./calibrate.sh submit     # every cell at smoke depth: costs, and CPU use
-./calibrate.sh report <jobid>  # prints the store to put in COSTS
+# 3. still on the cluster, in the same SWEEP_ROOT
+./calibrate.sh submit     # every cell at smoke depth: costs, and CPU use;
+                          # prints "calibration job <jobid>: ..."
+./calibrate.sh report <jobid>  # once it has finished: prints the COSTS line
+                               # to paste into config.sh
 ./submit.sh --dry-run     # the plan: cells, parts, where each cost came from
 ./submit.sh               # plan -> workers -> merge -> validation array
 
@@ -87,14 +91,17 @@ path you must get right:
 
 ```
 $SWEEP_ROOT/
-  queues/<queue>/         one per ./submit.sh (named for when it was planned):
-                          the plan, the claims, every finished part's state,
-                          and `arrays`, the worker pools submitted for it
+  queues/<queue>/         one per ./submit.sh (named for when it was planned)
+                          or ./calibrate.sh (calib-<time>): the plan, the
+                          claims, every finished part's state, and `arrays`,
+                          the worker pools submitted for it
   parts/<queue>/          that queue's staging store; workers write separate
-                          files by table, run and cell
+                          files by table, run and cell. A calibration's is
+                          what COSTS names, as /sweeps/parts/calib-<time>
   store/                  the analysis store, merged into after the workers;
                           the validation array writes its records here too
-  costs/                  earlier release ZIPs, for COSTS (your copies)
+  costs/                  your copies of earlier release ZIPs or calibrations,
+                          for COSTS (as /sweeps/costs/...)
   export/                 the Parquet tables + manifest.json
   dist/<id>.zip           the release asset
   logs/                   Slurm stdout/stderr
@@ -116,7 +123,9 @@ is not permitted` to stderr, and leaves `HOME` as your real home directory.
 Only the **queue and staging directory** are per submission. All submissions
 merge into the same `store/`, so versions, depths and runs accumulate there. Set
 `SWEEP_ROOT` to a fresh campaign directory for a publication at a new software
-version or platform. Preserve the image and configuration used for that campaign;
+version or platform, *before* calibrating: a calibration belongs to its
+campaign and stays in its `SWEEP_ROOT` (see [Sizing the pool](#sizing-the-pool);
+it never touches `store/`). Preserve the image and configuration used for that campaign;
 job scripts source `config.sh` when they run, so do not edit it while jobs are
 pending or running.
 
@@ -223,13 +232,41 @@ or stale cost wastes some time and never changes a result. `COSTS` lists where
 they come from, **in order of priority**: a later source overrides earlier
 ones for the cells it measured.
 
+**`COSTS` names container paths.** Every script runs the harness in the
+container with `$SWEEP_ROOT` mounted at `/sweeps`, so a source must be under
+`$SWEEP_ROOT`, and `COSTS` names it as the container sees it:
+`$SWEEP_ROOT/parts/calib-20261008T161544` on the cluster is
+`/sweeps/parts/calib-20261008T161544` in `COSTS`. Anything outside
+`$SWEEP_ROOT` is invisible to the container.
+
 **No earlier campaign is needed.** Measure the whole grid at smoke depth --
-1/8192 of a full sweep -- and use that:
+1/8192 of a full sweep -- and use that. Calibration is the first step of a
+campaign, run in its `SWEEP_ROOT`: it writes only `queues/calib-*` and
+`parts/calib-*`, never the analysis store, so there is nothing to clear
+between calibrating and submitting.
 
 ```bash
-./calibrate.sh submit             # FILTER at smoke depth, on 8 workers
-./calibrate.sh report <jobid>     # prints e.g. /sweeps/parts/calib-20261008T161544
-# config.sh:  COSTS="/sweeps/parts/calib-20261008T161544"
+./calibrate.sh submit             # FILTER at smoke depth, on 8 workers;
+                                  # prints "calibration job <jobid>: ..."
+./calibrate.sh report <jobid>     # when the job has finished, prints e.g.
+#   costs measured into /nobackup/.../anvl-sweeps/parts/calib-20261008T161544
+#     (seen as /sweeps/parts/calib-20261008T161544 inside the container, ...)
+#   ...
+#     COSTS="/sweeps/parts/calib-20261008T161544"
+```
+
+Paste that last line into `config.sh`. It keeps whatever `COSTS` already
+lists and adds the calibration last. If you lose the job ID, it is in
+`$SWEEP_ROOT/queues/calib-*/arrays` and in the log names
+`$SWEEP_ROOT/logs/calib-<jobid>_<n>.out`.
+
+To keep a calibration for a later campaign in a new `SWEEP_ROOT`, move its
+store across and name it there:
+
+```bash
+mkdir -p "$NEW_ROOT/costs"
+mv "$SWEEP_ROOT/parts/calib-20261008T161544" "$NEW_ROOT/costs/"
+# config.sh:  SWEEP_ROOT="$NEW_ROOT"  COSTS="/sweeps/costs/calib-20261008T161544"
 ```
 
 Scaled up, a smoke time overstates a cell's cost, since compiling is a larger
@@ -243,8 +280,10 @@ those cells:
 
 ```bash
 mkdir -p "$SWEEP_ROOT/costs" && cp linux-x86_64-cpu.zip "$SWEEP_ROOT/costs/"
+# config.sh:  COSTS="/sweeps/costs/linux-x86_64-cpu.zip"
 CALIBRATE_FILTER="spec=nv_dbinom|nv_pbinom|nv_qbinom" ./calibrate.sh submit
-# config.sh:  COSTS="/sweeps/costs/linux-x86_64-cpu.zip,/sweeps/parts/calib-..."
+./calibrate.sh report <jobid>     # prints the COSTS line with both, in order:
+#     COSTS="/sweeps/costs/linux-x86_64-cpu.zip,/sweeps/parts/calib-..."
 ```
 
 Costs are matched by cell, not by code, so the plan cannot tell that a

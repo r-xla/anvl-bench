@@ -45,11 +45,11 @@ QOS=""                               # optional; leave empty to omit
 # worker stops claiming parts it cannot finish inside WALLTIME, so a shorter
 # walltime costs nothing but more, shorter jobs -- pick what your partition
 # schedules quickly.
-WORKERS=64                           # array tasks, one worker each
+WORKERS=256                          # array tasks, one worker each
 WORKER_LIMIT=""                      # optional: at most this many at once (%K)
 CPUS_PER_TASK=1
 MEM_PER_TASK="4G"                    # a worker compiles many cells in its life
-WALLTIME="24:00:00"                  # per worker
+WALLTIME="48:00:00"                  # per worker
 MERGE_WALLTIME="04:00:00"
 
 # How cells are cut into parts. A cell is cut into parts of about UNIT_MINUTES
@@ -57,12 +57,15 @@ MERGE_WALLTIME="04:00:00"
 # into MAX_PARTS. A claim whose heartbeat is older than STALE_MINUTES belongs to
 # a dead worker and is taken over: keep it above the slowest single chunk.
 UNIT_MINUTES=15
-MAX_PARTS=64
+MAX_PARTS=256
 STALE_MINUTES=30
-# What cells cost before, to size their parts: paths INSIDE the container
-# (under /sweeps), comma-separated, IN ORDER OF PRIORITY -- a later source
-# overrides earlier ones for the cells it measured. Costs only decide how
-# finely cells are cut; they never change a result. The usual list:
+# What cells cost before, to size their parts: paths INSIDE the container,
+# comma-separated, IN ORDER OF PRIORITY -- a later source overrides earlier
+# ones for the cells it measured. The container sees SWEEP_ROOT as /sweeps,
+# so $SWEEP_ROOT/parts/calib-<time> on the cluster is written here as
+# /sweeps/parts/calib-<time>; ./calibrate.sh report prints the line to paste.
+# Costs only decide how finely cells are cut; they never change a result. The
+# usual list:
 #   1. optionally, the last release ZIP, copied into $SWEEP_ROOT/costs/
 #   2. the store ./calibrate.sh prints: a smoke sweep of the whole grid, or of
 #      just the functions that are new or changed since that release
