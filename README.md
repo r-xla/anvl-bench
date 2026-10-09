@@ -46,6 +46,14 @@ region and each exact point a tested cause and a category: *failure*,
 and a figure with verified base R limitations set aside is always marked (†)
 with the figure against base R beside it — never in its place.
 
+On a result page, a class whose regions hold failures or domain-boundary
+findings shows its maximum relative error as **∞**, with the finite maximum
+and the count beside it, and the histogram gives those samples a bin of their
+own. The regions are split across input classes by bit-pattern count
+(`regionsByClass()` in `js/model.js`): exactly in f32, and to within a sampling
+block in f64. A matching percentage short of every sample never displays as
+100%.
+
 **Coverage.** Every declared configuration is accounted for
 (`coverage.parquet`). One that errored or was never run is counted on the
 overview and its function's tile, listed with its error on the function's

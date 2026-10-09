@@ -385,9 +385,17 @@ export function binadeChart({ bands, view, onZoom, compare = null, domain = null
  * given, is drawn as an ink step outline over the bars, on the same axes --
  * both are counts of the same number of samples, so they compare directly.
  */
-export function histChart(rows, compare = null) {
+/**
+ * `self.inf` and `compare.inf` are the samples whose relative error is
+ * undefined or infinite and counts against the result (see COUNTED in
+ * model.js): drawn as a last bin past the decades, apart from them, since no
+ * decade holds them. Without it a backend that is infinitely wrong somewhere
+ * and exact everywhere else would look exact.
+ */
+export function histChart(rows, compare = null, self = {}) {
   const wrap = document.createElement("div");
   wrap.className = "chart";
+  const meLabel = self.label ?? "anvl";
   const cmpBy = new Map((compare?.rows ?? []).map((d) => [d.decade, d.count]));
   const decades = [...new Set([...rows.map((d) => d.decade), ...cmpBy.keys()])].sort((a, b) => a - b);
   const mine = new Map(rows.map((d) => [d.decade, d.count]));
@@ -395,16 +403,23 @@ export function histChart(rows, compare = null) {
     decade, count: mine.get(decade) ?? 0, cmp: cmpBy.has(decade) ? cmpBy.get(decade) : null,
   }));
   const any = (d) => d.count > 0 || d.cmp > 0;
-  if (!data.some(any)) {
+  const infBin = (self.inf ?? 0) > 0 || (compare?.inf ?? 0) > 0
+    ? { inf: true, count: self.inf ?? 0, cmp: compare ? compare.inf ?? 0 : null }
+    : null;
+  if (!data.some(any) && !infBin) {
     wrap.innerHTML = '<p class="muted">No finite errors recorded for this result.</p>';
     return wrap;
   }
   // Trim empty decades at both ends so the occupied range fills the chart.
-  let lo = data.findIndex(any);
-  let hi = data.length - 1 - [...data].reverse().findIndex(any);
-  lo = Math.max(0, lo - 1);
-  hi = Math.min(data.length - 1, hi + 1);
-  const shown = data.slice(lo, hi + 1);
+  let shown = [];
+  if (data.some(any)) {
+    let lo = data.findIndex(any);
+    let hi = data.length - 1 - [...data].reverse().findIndex(any);
+    lo = Math.max(0, lo - 1);
+    hi = Math.min(data.length - 1, hi + 1);
+    shown = data.slice(lo, hi + 1);
+  }
+  if (infBin) shown = [...shown, infBin];
 
   const h = 150;
   const pad = { l: 52, r: 12, t: 10, b: 30 };
@@ -423,12 +438,14 @@ export function histChart(rows, compare = null) {
     const bh = scale(d.count);
     const x = pad.l + j * bw;
     const rect = el("rect", {
-      class: "hbar", x: (x + bw * 0.1).toFixed(2), width: (bw * 0.8).toFixed(2),
+      class: d.inf ? "hbar hbar-inf" : "hbar", x: (x + bw * 0.1).toFixed(2), width: (bw * 0.8).toFixed(2),
       y: (pad.t + ph - bh).toFixed(2), height: Math.max(bh, d.count > 0 ? 1 : 0).toFixed(2),
     });
     const tip =
-      `Relative error 1e${String(d.decade).replace("-", MINUS)} – 1e${String(d.decade + 1).replace("-", MINUS)}\n` +
-      `anvl: ${d.count.toLocaleString("en-US")} samples` +
+      (d.inf
+        ? "Relative error undefined or infinite (unexplained disagreements and boundary findings)\n"
+        : `Relative error 1e${String(d.decade).replace("-", MINUS)} – 1e${String(d.decade + 1).replace("-", MINUS)}\n`) +
+      `${meLabel}: ${d.count.toLocaleString("en-US")} samples` +
       (compare ? `\n${compare.label}: ${(d.cmp ?? 0).toLocaleString("en-US")} samples` : "");
     rect.append(el("title", {}, document.createTextNode(tip)));
     svg.append(rect);
@@ -436,7 +453,11 @@ export function histChart(rows, compare = null) {
     const hit = el("rect", { class: "hhit", x: x.toFixed(2), width: bw.toFixed(2), y: pad.t, height: ph });
     hit.append(el("title", {}, document.createTextNode(tip)));
     hits.push(hit);
-    if (shown.length <= 14 || j % 2 === 0) {
+    if (d.inf) {
+      svg.append(el("line", { class: "inf-sep", x1: x.toFixed(2), x2: x.toFixed(2), y1: pad.t, y2: pad.t + ph }));
+      svg.append(el("text", { class: "tick", x: (x + bw / 2).toFixed(1), y: h - 10,
+        "text-anchor": "middle" }, document.createTextNode("∞")));
+    } else if (shown.length <= 14 || j % 2 === 0) {
       svg.append(el("text", { class: "tick", x: (x + bw / 2).toFixed(1), y: h - 10,
         "text-anchor": "middle" }, document.createTextNode(decadeTick(d.decade))));
     }

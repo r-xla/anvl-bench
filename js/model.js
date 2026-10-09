@@ -129,3 +129,108 @@ export function headline(c, verified) {
   const excl = verified && typeof c.worst_out_normal_excl === "number" ? c.worst_out_normal_excl : null;
   return { all, setAside: excl !== null && excl !== all ? excl : null };
 }
+
+/**
+ * Categories whose samples count against a result: relative error undefined
+ * or infinite and not set aside. A backend limitation (a subnormal input
+ * flushed to zero that returned the result for zero) is explained by its
+ * class and listed with it; undefined-domain conventions and verified base R
+ * limitations are the two the harness sets aside.
+ */
+export const COUNTED = ["failure", "boundary"];
+
+/**
+ * The regions' no-finite-error samples, split by the input class of the bit
+ * patterns they cover -- the harness's input_class() rule, applied per band.
+ * A region is a run of bit patterns that can cross classes (±0 into the
+ * subnormals, say), so it is split by pattern count: exact in f32, where the
+ * sweep visits every pattern and n_failing === n_patterns, and to within a
+ * sampling block in f64, where samples are evenly spaced in bit order.
+ *
+ * Returns { [class]: { [category]: samples } }, with every sample of every
+ * region assigned to exactly one class.
+ *
+ * `bandOf(key)` gives the band row for a column key (see chart.js bandKey),
+ * if the result has one; the class of a band outside the domain follows from
+ * its x_from/x_to, as in the harness.
+ */
+export function regionsByClass(ranges, dtype, domain, bandOf = () => undefined) {
+  const f64 = dtype === "f64";
+  const mb = f64 ? 52n : 23n;
+  const top = f64 ? 2047 : 255;
+  const bias = f64 ? 1023 : 127;
+  const signBit = 1n << (f64 ? 63n : 31n);
+  const maxMag = signBit - 1n;
+  const [lo, hi] = domain ?? [-Infinity, Infinity];
+
+  const classOf = (sign, e, zero) => {
+    if (zero) return "zero";
+    if (e === 0) return "subnormal";
+    if (e === top) return "inf_nan";
+    const b = bandOf(`${sign}:${e}`);
+    const a = 2 ** (e - bias);
+    const [xf, xt] = b ? [b.x_from, b.x_to] : sign < 0 ? [-2 * a, -a] : [a, 2 * a];
+    return xt < lo || xf > hi ? "outside_domain" : "normal";
+  };
+
+  // Pattern counts by class over magnitudes [m0, m1] of one sign.
+  const segment = (sign, m0, m1, into) => {
+    if (m1 < m0) return;
+    const e0 = Number(m0 >> mb);
+    const e1 = Number(m1 >> mb);
+    for (let e = e0; e <= e1; e++) {
+      let a = BigInt(e) << mb;
+      let b = ((BigInt(e) + 1n) << mb) - 1n;
+      if (a < m0) a = m0;
+      if (b > m1) b = m1;
+      if (e === 0 && a === 0n) {
+        into.zero = (into.zero ?? 0n) + 1n;
+        a = 1n;
+        if (b < a) continue;
+      }
+      const k = classOf(sign, e, false);
+      into[k] = (into[k] ?? 0n) + (b - a + 1n);
+    }
+  };
+
+  const out = {};
+  for (const r of ranges) {
+    const n = Number(r.n_failing ?? 0);
+    if (!n) continue;
+    const cat = r.category;
+    const counts = {};
+    const bf = BigInt(r.bits_from);
+    const bt = BigInt(r.bits_to);
+    const sf = bf & signBit ? -1 : 1;
+    const st = bt & signBit ? -1 : 1;
+    const mf = bf & maxMag;
+    const mt = bt & maxMag;
+    if (!Number.isFinite(r.x_from) && !Number.isFinite(r.x_to)) {
+      // ±∞ to NaN: the top exponent field, whatever order its NaNs sort in
+      counts.inf_nan = 1n;
+    } else if (sf === st) {
+      segment(sf, mf < mt ? mf : mt, mf < mt ? mt : mf, counts);
+    } else {
+      // bit order across the sign: up to the top of one, then up from zero
+      segment(sf, mf, maxMag, counts);
+      segment(st, 0n, mt, counts);
+    }
+    const total = Object.values(counts).reduce((a, c) => a + c, 0n);
+    // Largest share first, so rounding leaves its remainder where it matters least.
+    const parts = Object.entries(counts).sort((a, b) => (b[1] > a[1] ? 1 : b[1] < a[1] ? -1 : 0));
+    let left = n;
+    parts.forEach(([k, c], i) => {
+      const share = i === parts.length - 1 ? left : Math.round((n * Number(c)) / Number(total));
+      left -= share;
+      out[k] ??= {};
+      out[k][cat] = (out[k][cat] ?? 0) + share;
+    });
+  }
+  return out;
+}
+
+/** Samples of one class's split (or of all classes) in the given categories. */
+export function countIn(byCat, cats = COUNTED) {
+  if (!byCat) return 0;
+  return cats.reduce((a, k) => a + (byCat[k] ?? 0), 0);
+}

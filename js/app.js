@@ -14,7 +14,7 @@ import { openStore } from "./store.js";
 import { binadeChart, histChart, bandKey, BEHAVIOUR } from "./chart.js";
 import { num, int, pct, cellParts, flagList } from "./fmt.js";
 import { snippet } from "./snippet.js";
-import { CLASSES, CATEGORIES, CAUSES, REF_STATUS, state, headline, coverageState, firstLine } from "./model.js";
+import { CLASSES, CATEGORIES, CAUSES, REF_STATUS, state, headline, coverageState, firstLine, regionsByClass, countIn } from "./model.js";
 
 // --- tiny DOM helper ---------------------------------------------------
 
@@ -276,6 +276,19 @@ function aggregate(rows) {
     setAside,
     ...count,
   };
+}
+
+/** A result's unexplained disagreements in words: regions with the samples
+ * they hold, and special test points. A region can be one sample or millions,
+ * so its count alone says little. */
+function failureWords(r) {
+  const regions = r.n_runs_unclassified ?? 0;
+  const samples = r.n_failing_failure ?? 0;
+  const points = r.n_points_failure ?? 0;
+  return [
+    regions ? `${int(regions)} region${regions === 1 ? "" : "s"} (${int(samples)} sample${samples === 1 ? "" : "s"})` : null,
+    points ? `${int(points)} special test point${points === 1 ? "" : "s"}` : null,
+  ].filter(Boolean).join(" and ") + " with undefined or infinite relative error";
 }
 
 /** The findings of one result, as a row of pills: every category shown. */
@@ -693,36 +706,84 @@ async function renderCell(cellId, output, zoom) {
     if (typeof excl !== "number" || excl === c[field]) return num(c[field], 3);
     return [num(c[field], 3), h("div.sa-line", { title: "excluding verified base R limitations" }, `${num(excl, 3)} excluding verified base R limitations`)];
   };
-  const classRow = (k, c, tc) => h("tr", { class: k === "all" ? "all-row" : null },
-    h("th.cls", { scope: "row" }, k === "all" ? "All inputs" : CLASSES[k].long,
-      k === "all" ? null : h("div.expect", {}, CLASSES[k].expect)),
-    h("td.r", {}, int(c?.n)),
-    h("td.r", {}, pct(frac(c))),
-    h("td.r", {}, c?.n_rounded ? int(c.n_rounded) : "—"),
-    h("td.r", {}, worstWithExcl(c, st.verified, "worst_out_normal")),
-    h("td.r", {}, worstWithExcl(c, st.verified, "worst_rel_err")),
-    h("td.r", {}, c && c.worst_rel_err > 0
-      ? repro(num(c.worst_x), r, c.worst_x, c.worst_bits, `worst input, ${k === "all" ? "all inputs" : CLASSES[k].long}`,
-        recOf(r, c.worst_value, c.worst_reference, c.worst_rel_err))
-      : "—"),
-    t ? h("td.r.cmp", {}, pct(frac(tc))) : null,
-    t ? h("td.r", {}, worstWithExcl(tc, tst.verified, "worst_out_normal")) : null);
+  // How many of a class's samples have an undefined or infinite relative error
+  // that counts against the result (COUNTED categories), from the regions --
+  // which arrive with the panels below, so the table is drawn once without
+  // them and again when they are in. `split` is regionsByClass() output, or
+  // null while loading.
+  const nonfiniteOf = (split, k) => {
+    if (!split) return null;
+    const by = k === "all"
+      ? Object.values(split).reduce((a, o) => {
+        for (const [cat, n] of Object.entries(o)) a[cat] = (a[cat] ?? 0) + n;
+        return a;
+      }, {})
+      : split[k];
+    return { n: countIn(by), failure: by?.failure ?? 0, boundary: by?.boundary ?? 0 };
+  };
+  const nfLine = (nf) => {
+    const kinds = [[nf.failure, "unexplained"], [nf.boundary, "boundary"]].filter(([n]) => n);
+    const what = kinds.length === 1 ? ` (${kinds[0][1]})` : ` (${kinds.map(([n, w]) => `${int(n)} ${w}`).join(", ")})`;
+    return h("div.inf-line", {}, jump("regions", `${int(nf.n)} undefined or infinite${what}`));
+  };
+  // A finite maximum is only the maximum when nothing in the class is
+  // infinitely wrong: otherwise the figure is ∞, with the finite one beside it.
+  const worstCell = (c, verified, field, nf, provable = true) => {
+    const finite = worstWithExcl(c, verified, field);
+    if (!nf || !nf.n) return finite;
+    if (!provable) return [finite, nfLine(nf)];
+    return [h("span.inf", {}, "∞"), h("div.sa-line", {}, "finite: ", finite), nfLine(nf)];
+  };
+  // Among samples whose reference is a normal float, a sample with no finite
+  // error has a non-finite value. The class's split does not say how many of
+  // its no-finite-error samples are among them, unless every non-identical
+  // one is: then nothing finite differed, and the worst is 0.
+  const outNormalInf = (c, verified) => !!c && c.worst_out_normal === 0 &&
+    (c.n_out_normal ?? 0) - (c.n_out_normal_identical ?? 0) - (verified ? c.n_ref_candidate_nonfinite ?? 0 : 0) > 0;
+  const pctCell = (f, c) => h("span", { title: c?.n ? `${int(c.n_identical)} of ${int(c.n)} samples bit-identical to the reference` : null }, pct(f));
+  const classRow = (k, c, tc, split, tSplit) => {
+    const nf = nonfiniteOf(split, k);
+    const tnf = nonfiniteOf(tSplit, k);
+    return h("tr", { class: k === "all" ? "all-row" : null },
+      h("th.cls", { scope: "row" }, k === "all" ? "All inputs" : CLASSES[k].long,
+        k === "all" ? null : h("div.expect", {}, CLASSES[k].expect)),
+      h("td.r", {}, int(c?.n)),
+      h("td.r", {}, pctCell(frac(c), c)),
+      h("td.r", {}, c?.n_rounded ? int(c.n_rounded) : "—"),
+      h("td.r", {}, worstCell(c, st.verified, "worst_out_normal", nf, outNormalInf(c, st.verified))),
+      h("td.r", {}, worstCell(c, st.verified, "worst_rel_err", nf)),
+      h("td.r", {}, c && c.worst_rel_err > 0
+        ? repro(num(c.worst_x), r, c.worst_x, c.worst_bits, `worst input, ${k === "all" ? "all inputs" : CLASSES[k].long}`,
+          recOf(r, c.worst_value, c.worst_reference, c.worst_rel_err))
+        : "—"),
+      t ? h("td.r.cmp", {}, pctCell(frac(tc), tc)) : null,
+      t ? h("td.r", {}, worstCell(tc, tst.verified, "worst_out_normal", tnf, outNormalInf(tc, tst.verified))) : null,
+      t ? h("td.r", {}, worstCell(tc, tst.verified, "worst_rel_err", tnf)) : null);
+  };
   const asClass = (x) => x && ({
     n: x.n_samples, n_identical: x.n_exact, n_rounded: x.n_rounded, worst_rel_err: x.worst_rel_err,
     worst_rel_err_excl: x.worst_rel_err_excl, worst_out_normal: x.worst_out_normal,
     worst_out_normal_excl: x.worst_out_normal_excl, worst_x: x.worst_x, worst_bits: x.worst_bits,
+    n_out_normal: x.n_out_normal, n_out_normal_identical: x.n_out_normal_identical,
+    n_ref_candidate_nonfinite: x.n_ref_candidate_nonfinite,
   });
-  const classTable = h("div.compare.classes", {}, table([
+  const buildClassTable = (split = null, tSplit = null) => h("div.compare.classes", {}, table([
     { label: "input, and what should happen" }, { label: "samples", align: "r" },
     { label: "Matches reference (%)", align: "r" },
     { label: "rounded", align: "r", hint: "correctly rounded to the result's precision without being identical: the best the precision allows, though its relative error is not zero" },
     { label: "Max. relative error: normal outputs", align: "r", hint: "worst relative error where the reference value is a normal float" },
-    { label: "Max. relative error: all outputs", align: "r" }, { label: "worst at x", align: "r" },
-    ...(t ? [{ label: "Matches reference (%)", align: "r", cls: "cmp" }, { label: "Max. relative error: normal outputs", align: "r" }] : []),
+    { label: "Max. relative error: all outputs", align: "r", hint: "∞ when any sample has an undefined or infinite relative error that is not set aside, with the finite maximum beside it" },
+    { label: "worst at x", align: "r" },
+    ...(t ? [
+      { label: "Matches reference (%)", align: "r", cls: "cmp" },
+      { label: "Max. relative error: normal outputs", align: "r" },
+      { label: "Max. relative error: all outputs", align: "r" },
+    ] : []),
   ], [
-    ...Object.keys(CLASSES).filter((k) => mine[k]).map((k) => classRow(k, mine[k], theirs?.[k])),
-    classRow("all", asClass(r), asClass(t)),
-  ], t ? [{ label: "", span: 7 }, { label: cmpLabel, span: 2, cls: "cmp" }] : null));
+    ...Object.keys(CLASSES).filter((k) => mine[k]).map((k) => classRow(k, mine[k], theirs?.[k], split, tSplit)),
+    classRow("all", asClass(r), asClass(t), split, tSplit),
+  ], t ? [{ label: "", span: 7 }, { label: cmpLabel, span: 3, cls: "cmp" }] : null));
+  const classTable = h("div.class-slot", {}, buildClassTable());
 
   // Facts that sit across the classes, each kept visible.
   const facts = [
@@ -755,11 +816,9 @@ async function renderCell(cellId, output, zoom) {
 
   // --- what the categories add up to, in words ---
   const callouts = [];
-  const nFailR = r.n_runs_unclassified ?? 0;
-  const nFailP = r.n_points_failure ?? 0;
   if (st.failing) {
     callouts.push(h("div.callout.warn", {},
-      h("strong", {}, `${me} has unexplained disagreements: ${[nFailR ? `${nFailR} region${nFailR === 1 ? "" : "s"}` : null, nFailP ? `${nFailP} special test point${nFailP === 1 ? "" : "s"}` : null].filter(Boolean).join(" and ")} with undefined or infinite relative error`),
+      h("strong", {}, `${me} has unexplained disagreements: `, failureWords(r)),
       h("p", {}, "Listed below, under ", jump("regions", "regions"), " and ", jump("points", "special test points"), ". ",
         h("span.muted", {}, "These findings are not explained by a recognised limitation or an undefined-domain convention. Further analysis is needed to determine which implementation is more accurate."))));
   }
@@ -784,7 +843,7 @@ async function renderCell(cellId, output, zoom) {
   if (t && tst.failing && !st.failing) {
     callouts.push(h("div.callout", {},
       h("strong", {}, `${cmpLabel} has unexplained disagreements; none were found for ${me}`),
-      h("p", {}, `${cmpLabel} has ${(t.n_runs_unclassified ?? 0) + (t.n_points_failure ?? 0)} failure(s) on this cell, listed below beside ${me}'s findings.`)));
+      h("p", {}, `${cmpLabel} has `, failureWords(t), ` on this cell, listed below beside ${me}'s findings.`)));
   }
 
   const noTwin = !t && s.comparators.length && r.backend === s.primary
@@ -811,7 +870,7 @@ async function renderCell(cellId, output, zoom) {
       refPills(r)),
     h("div.findings", {}, findingPills(r)),
     ...callouts,
-    h("p.note", {}, "Reference: ", h("strong", {}, referenceLabel(r)), ". Error statistics describe finite relative errors; undefined or infinite errors appear separately in the findings. Matching percentages include those other comparisons. Signed zeros count as equal in sweep percentages and are reported separately."),
+    h("p.note", {}, "Reference: ", h("strong", {}, referenceLabel(r)), ". A maximum relative error is ∞ where some sample's error is undefined or infinite and not set aside (unexplained disagreements and boundary findings); the finite maximum is shown beside it, and every such sample is listed under ", jump("regions", "regions"), ". Matching percentages count every sample, and never round up to 100%. Signed zeros count as equal in sweep percentages and are reported separately."),
     h("p.note", {}, "Select an underlined input to copy a reproduction script."),
     classTable,
     factList,
@@ -843,6 +902,18 @@ async function renderCell(cellId, output, zoom) {
   ]);
   // The reader may have moved on while this was loading.
   if (gen !== app.gen) return;
+
+  // The regions by input class, now that they are in: the class table again,
+  // with its infinite errors.
+  const domain = [r.domain_lo ?? -Infinity, r.domain_hi ?? Infinity];
+  const splitOf = (rows, bs) => {
+    const byKey = new Map(bs.map((b) => [bandKey(b), b]));
+    return regionsByClass(rows, parts.dtype, domain, (k) => byKey.get(k));
+  };
+  const split = splitOf(ranges, bands);
+  const tSplit = t ? splitOf(tRanges, tBands) : null;
+  put(classTable, buildClassTable(split, tSplit));
+  const infOf = (sp) => (sp ? Object.values(sp).reduce((a, o) => a + countIn(o), 0) : null);
 
   const cmpKey = t ? h("span.key-item", {}, h("i.k-cmp"), `${cmpLabel} (line)`) : null;
 
@@ -972,7 +1043,7 @@ async function renderCell(cellId, output, zoom) {
       h("h2", {}, "Distribution of relative error"),
       v ? h("p.note", {}, h("strong", {}, "Whole result — the zoom below does not apply here."),
         " The sweep records this distribution per result rather than per binade; the line under the chart gives the zoomed range's own figures.") : null,
-      histChart(hist, t ? { label: cmpLabel, rows: tHist } : null),
+      histChart(hist, t ? { label: cmpLabel, rows: tHist, inf: infOf(tSplit) } : null, { inf: infOf(split), label: me }),
       candInHist
         ? h("p.note", {}, `${int(candInHist)} of these finite errors are `,
           st.verified ? "verified base R limitations" : "candidate base R disputes (not validated)",

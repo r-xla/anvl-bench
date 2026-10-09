@@ -38,7 +38,11 @@ export function compact(v) {
 export function pct(v, dp = 1) {
   if (v === null || v === undefined || Number.isNaN(v)) return "—";
   if (v > 0 && v < 10 ** -dp / 100) return "<" + (10 ** -dp / 100 * 100).toFixed(dp) + "%";
-  return (100 * v).toFixed(dp) + "%";
+  // Symmetric with the guard above: anything short of every sample must not
+  // read as 100% -- 40k failures among 1e9 samples rounds to 100.0%.
+  const s = (100 * v).toFixed(dp);
+  if (v < 1 && Number(s) >= 100) return ">" + (100 - 10 ** -dp).toFixed(dp) + "%";
+  return s + "%";
 }
 
 /**
