@@ -225,6 +225,8 @@ dl.fingerprint dd { margin: 0 0 0.4rem; overflow-wrap: anywhere; }
 .bar { cursor: pointer; }
 .bar:hover { fill: var(--accent) !important; }
 .hbar { fill: var(--accent); opacity: 0.75; }
+.hbar.hbar-inf { fill: var(--warn-line); opacity: 1; }
+.hist-svg .inf-sep { stroke: var(--line); stroke-width: 1; stroke-dasharray: 3 3; }
 .hhit { fill: transparent; }
 .hhit:hover { fill: currentColor; fill-opacity: 0.06; }
 
@@ -394,6 +396,9 @@ table.grid th.grp, table.grid td.grp { border-left: 1px solid var(--line); }
 /* A figure with verified base R limitations set aside: marked, never silent. */
 .sa { font-size: 0.8em; color: var(--ink-soft); cursor: help; }
 .sa-line { font-size: 0.72rem; color: var(--ink-soft); white-space: nowrap; }
+.inf { color: var(--warn-ink); font-weight: 600; font-size: 1.15em; }
+.inf-line { font-size: 0.72rem; color: var(--warn-ink); white-space: nowrap; }
+.inf-line .link { color: inherit; }
 
 .small { font-size: 0.78rem; }
 td.small { max-width: 18rem; }
@@ -442,7 +447,7 @@ button.repro:focus-visible { outline: 2px solid var(--accent); outline-offset: 2
 table.grid th { white-space: normal; min-width: 6rem; }
 .pills { min-width: 12rem; }
 .pill { white-space: normal; }
-.sa-line { white-space: normal; min-width: 10rem; }
+.sa-line, .inf-line { white-space: normal; min-width: 10rem; }
 .configuration-table td:first-child, .configuration-table thead tr:last-child th:first-child {
   position: sticky; left: 0; z-index: 1; background: var(--panel);
   border-right: 1px solid var(--line);
