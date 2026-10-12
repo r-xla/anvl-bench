@@ -96,23 +96,39 @@ function hexToNum(s) {
 // --- what each function is ----------------------------------------------
 
 // The parameter sets as the harness writes them (NORM_PARAMS, UNIF_INTERVALS,
-// EXP_PARAMS), per family since set names repeat across families: the backend
+// EXP_PARAMS, BINOM_D_PARAMS, BINOM_PQ_PARAMS), per family since set names
+// repeat across families (and within the binomial, where the density's
+// `large` is not the distribution function's): the backend
 // is handed these doubles, whatever the cell's precision. Each is the same
 // correctly rounded product of doubles in JS as in R.
 const NORM_SETS = { standard: { mean: 0, sd: 1 }, shifted: { mean: -Math.PI, sd: 2 * Math.PI } };
 const UNIF_SETS = { unit: { min: 0, max: 1 }, wide: { min: -Math.PI, max: 2 * Math.PI } };
 const EXP_SETS = { standard: { rate: 1 }, small: { rate: Math.PI * 1e-10 }, large: { rate: Math.PI * 1e10 } };
+const BINOM_D_SETS = {
+  tabulated: { x: 3, size: 10 }, next_to_zero: { x: 1, size: 10 }, next_to_size: { x: 9, size: 10 },
+  at_zero: { x: 0, size: 1000 }, at_size: { x: 1000, size: 1000 },
+  large: { x: 3e5, size: 1e6 }, huge: { x: 3e12, size: 1e13 },
+};
+const BINOM_PQ_SETS = {
+  small: { size: 20, prob: 0.3 }, large: { size: 1e6, prob: 0.3 },
+  skewed: { size: 1e6, prob: 1e-3 }, rare: { size: 1e10, prob: 1e-10 },
+};
 
 // Each parameter's default in the anvl and base R signatures, and its name in
 // the MPFR truth. Python avoids min and max, which would shadow the builtins
-// the scoring uses.
+// the scoring uses. The binomial's parameters have no defaults; its count x is
+// K in the truth, since X is always the swept input.
 const DEFAULT = { mean: 0, sd: 1, min: 0, max: 1, rate: 1 };
-const MP_NAME = { mean: "M", sd: "S", min: "A", max: "B", rate: "R" };
+const MP_NAME = { mean: "M", sd: "S", min: "A", max: "B", rate: "R", x: "K", size: "N", prob: "P" };
 const PY_NAME = { min: "mn", max: "mx" };
 
+// The binomial probabilities as the harness writes them: each short decimal was
+// checked to parse to exactly the same double as its hex form in R on Apple
+// Silicon, where long 17-digit literals do not.
 const NAMED = [
   [Math.PI, "pi", "math.pi"], [-Math.PI, "-pi", "-math.pi"],
   [2 * Math.PI, "2 * pi", "2 * math.pi"], [-2 * Math.PI, "-2 * pi", "-2 * math.pi"],
+  [0.3, "0.3", "0.3"], [1e-3, "1e-3", "1e-3"], [1e-10, "1e-10", "1e-10"],
 ];
 const rParam = (v) => NAMED.find(([n]) => n === v)?.[1] ?? rNum(v);
 const pyParam = (v) => NAMED.find(([n]) => n === v)?.[2] ?? pyNum(v);
@@ -126,6 +142,19 @@ const EXPO = ["rate"];
 const NORM_JAX = { jax: "norm", jaxArgs: "mean, sd", sets: NORM_SETS };
 const UNIF_JAX = { jax: "uniform", jaxArgs: "mn, mx - mn", sets: UNIF_SETS };
 const EXPO_JAX = { jax: "expon", jaxArgs: "scale=1 / rate", sets: EXP_SETS };
+// The binomial departs from the others in ways the harness's calls dictate
+// (sweeps/_binomial.R, dbinom.R, pbinom.R, qbinom.R):
+//   - the density is swept in prob, not x, so the swept variable is `prob`
+//     (`variable`) and sits last in the signature (`sig`);
+//   - the density's count is an array of the cell's dtype, nv_scalar(x), since
+//     it is the operand that sets the precision (`scalar`), and its gradient is
+//     taken in prob alone (`wrt`), with x and size scalars too (`gradScalar`);
+//   - every JAX twin takes size and prob at the cell's precision (`jaxTyped`),
+//     and the distribution function's twin is the harness's own betainc
+//     formula, there being no binom.cdf in jax.scipy.stats. There is no
+//     quantile twin.
+const BINOM = ["size", "prob"];
+const BINOM_PQ = { params: BINOM, sets: BINOM_PQ_SETS, jaxTyped: true };
 const SPECS = {
   nv_dnorm: { arg: "x", params: NORM, base: "dnorm", flags: ["log"], ...NORM_JAX },
   nv_pnorm: { arg: "q", params: NORM, base: "pnorm", flags: ["lower_tail", "log_p"], ...NORM_JAX },
@@ -136,6 +165,16 @@ const SPECS = {
   nv_dexp: { arg: "x", params: EXPO, base: "dexp", flags: ["log"], ...EXPO_JAX },
   nv_pexp: { arg: "q", params: EXPO, base: "pexp", flags: ["lower_tail", "log_p"], ...EXPO_JAX },
   nv_qexp: { arg: "p", params: EXPO, base: "qexp", flags: ["lower_tail", "log_p"], ...EXPO_JAX },
+  nv_dbinom: {
+    arg: "prob", variable: "prob", params: ["x", "size"], sig: ["x", "size", "prob"], base: "dbinom", flags: ["log"],
+    sets: BINOM_D_SETS, scalar: ["x"], gradScalar: ["x", "size"], wrt: ["prob"],
+    jax: "binom", jaxImport: "from jax.scipy.stats import binom", jaxTyped: true,
+  },
+  nv_pbinom: {
+    arg: "q", base: "pbinom", flags: ["lower_tail", "log_p"], ...BINOM_PQ,
+    jax: "betainc", jaxImport: "from jax.scipy.special import betainc",
+  },
+  nv_qbinom: { arg: "p", base: "qbinom", flags: ["lower_tail", "log_p"], ...BINOM_PQ },
 };
 
 const BASE_FLAG = { log: "log", lower_tail: "lower.tail", log_p: "log.p" };
@@ -191,10 +230,53 @@ const HELPERS = {
   log1mexp: `log1mexp <- function(v) {  # log(1 - exp(v)), v <= 0, split at -log 2
   if (v > -log(2)) log(-expm1(v)) else log1p(-exp(v))
 }`,
+  // mp_binom_log_density: by lgamma, which at 256 bits keeps ~180 bits below
+  // the point even at lgamma(1e13 + 1)
+  binomLd: `binom_ld <- function(J, N, P) {  # log dbinom(J; N, P): J whole in [0, N], 0 < P < 1
+  lgamma(N + 1) - lgamma(J + 1) - lgamma(N - J + 1) + J * log(P) + (N - J) * log1p(-P)
+}`,
+  // The harness's own MPFR distribution function (mp_log_pbinom_lower) is a
+  // continued fraction for the lower log tail only. This is the same quantity
+  // by its definition, for both tails: the mass summed outward from k, away
+  // from the mode, where it falls monotonically, so the sum stops once a term
+  // is below 2^-(precision + 8) of it. Each term is taken relative to the
+  // first, so nothing underflows however far out k is.
+  binomTail: `log_binom_tail <- function(k, N, P, lower) {  # log P(X <= k) or log P(X > k), whole 0 <= k < N
+  n <- Rmpfr::asNumeric(N)  # exact: N is the mpfr of a double
+  down <- k < floor((n + 1) * Rmpfr::asNumeric(P))  # below the mode, sum k, k - 1, ...; else k + 1, k + 2, ...
+  j0 <- if (down) k else k + 1
+  end <- if (down) 0 else n
+  first <- binom_ld(Rmpfr::mpfr(j0, ${PREC}), N, P)
+  total <- Rmpfr::mpfr(0, ${PREC})
+  repeat {
+    j <- seq(j0, by = if (down) -1 else 1, length.out = min(4096, abs(end - j0) + 1))
+    t <- exp(binom_ld(Rmpfr::mpfr(j, ${PREC}), N, P) - first)
+    total <- total + sum(t)
+    j0 <- j[length(j)] + if (down) -1 else 1
+    if (t[length(t)] < 2^-(${PREC} + 8) * total || (if (down) j0 < 0 else j0 > n)) break
+  }
+  near <- first + log(total)  # the lower tail if down, else the upper
+  if (down == lower) near else log1mexp(near)
+}`,
+  // The quantile is the least whole k whose tail passes the target: from base
+  // R's own answer, stepped down while the count below also passes, and up
+  // until k does. Base R widens each comparison by 64 ulp (its fuzz), so at a
+  // step of the distribution function it can answer one count off.
+  binomQuantile: `binom_quantile <- function(q0, t, N, P, lower) {  # q0 base R's answer, t the target log probability
+  passes <- function(k) {
+    if (k >= Rmpfr::asNumeric(N)) return(TRUE)
+    v <- log_binom_tail(k, N, P, lower)
+    if (lower) v >= t else v <= t
+  }
+  k <- q0
+  while (k > 0 && passes(k - 1)) k <- k - 1
+  while (!passes(k)) k <- k + 1
+  k
+}`,
 };
 
 /** { helpers: [names], lines: [R lines], expr: R expression giving the truth } */
-function truthR(spec, kind, output, f) {
+function truthR(spec, kind, output, f, refName = (k) => k) {
   const lower = f.lower_tail !== false;
   const s = lower ? 1 : -1;
   const h = new Set();
@@ -336,8 +418,40 @@ function truthR(spec, kind, output, f) {
       const d = { p: dp, rate: `${Lx} / (R * R)` }[output];
       expr = `if (${inRange}) ${d} else Rmpfr::mpfr(0, ${PREC})`;
     }
+  } else if (spec === "nv_dbinom") {
+    // swept in prob, so X is the probability and K the count; prob the double
+    const at0 = kind === "value"
+      ? (f.log ? "if (K == 0) 0 else -Inf" : "if (K == 0) 1 else 0")
+      : (f.log ? "if (K == 0) -N else Inf" : "N * ((K == 1) - (K == 0))");
+    const at1 = kind === "value"
+      ? (f.log ? "if (K == N) 0 else -Inf" : "if (K == N) 1 else 0")
+      : (f.log ? "if (K == N) N else -Inf" : "N * ((K == N) - (K == N - 1))");
+    h.add("binomLd");
+    L.push(`out <- if (prob < 0 || prob > 1) ${kind === "value" ? "NaN" : "0"}`);
+    L.push(`  else if (prob == 0) ${at0}  # the polynomial's limits at the ends of [0, 1]`);
+    L.push(`  else if (prob == 1) ${at1}`);
+    if (kind === "value") {
+      L.push(`  else ${f.log ? "binom_ld(K, N, X)" : "exp(binom_ld(K, N, X))"}`);
+    } else {
+      // d/dp f = f d / (p (1 - p)), d = x - n p, exact at this precision
+      L.push(`  else (K - N * X) / (X * (1 - X))${f.log ? "" : " * exp(binom_ld(K, N, X))"}`);
+    }
+    expr = `Rmpfr::mpfr(out, ${PREC})`;
+  } else if (spec === "nv_pbinom") {
+    h.add("binomLd"); h.add("log1mexp"); h.add("binomTail");
+    // below and above the support, as base R resolves them
+    const [below, above] = lower ? [f.log_p ? "-Inf" : "0", f.log_p ? "0" : "1"] : [f.log_p ? "0" : "1", f.log_p ? "-Inf" : "0"];
+    L.push("k <- floor(x + 1e-7)  # the count, as base R takes it, in double");
+    const tail = `log_binom_tail(k, N, P, lower = ${lower ? "TRUE" : "FALSE"})`;
+    expr = `if (x < 0) Rmpfr::mpfr(${below}, ${PREC}) else if (k >= N) Rmpfr::mpfr(${above}, ${PREC}) else ${f.log_p ? tail : `exp(${tail})`}`;
+  } else if (spec === "nv_qbinom") {
+    h.add("binomLd"); h.add("log1mexp"); h.add("binomTail"); h.add("binomQuantile");
+    const inRange = f.log_p ? "x <= 0" : "x >= 0 && x <= 1";
+    const lt = lower ? "TRUE" : "FALSE";
+    L.push(`q0 <- suppressWarnings(qbinom(x, ${refName("size")}, ${refName("prob")}, lower.tail = ${lt}, log.p = ${f.log_p ? "TRUE" : "FALSE"}))  # base R's start`);
+    expr = `if (${inRange}) Rmpfr::mpfr(binom_quantile(q0, ${f.log_p ? "X" : "log(X)"}, N, P, lower = ${lt}), ${PREC}) else Rmpfr::mpfr(NaN, ${PREC})`;
   }
-  const order = ["phi", "imills", "logPhi", "log1mexp"];
+  const order = ["phi", "imills", "logPhi", "log1mexp", "binomLd", "binomTail", "binomQuantile"];
   return { helpers: order.filter((k) => h.has(k)).map((k) => HELPERS[k]), lines: L, expr };
 }
 
@@ -391,6 +505,46 @@ const CAVEAT = 'Note: results may differ from the web interface unless run on ex
 const BATCH_R = "n <- 1024  # evaluated in a batch, as the sweep is: XLA compiles a lone element differently";
 const BATCH_PY = "n = 1024  # evaluated in a batch, as the sweep is: XLA compiles a lone element differently";
 
+// --- the binomial's JAX twins ---------------------------------------------------
+//
+// As jax_binom() in sweeps/_binomial.R: the density's twin is logpmf/pmf with
+// prob the traced argument, its gradient vmapped over prob alone, and the
+// distribution function's the betainc formula SciPy's binom.cdf and binom.sf
+// use (Cephes bdtr and bdtrc), specialised here to this cell's flags. size,
+// prob and the count are arrays at the cell's precision, as the harness
+// passes them.
+function binomJax(spec, kind, f, jdt) {
+  const typed = (v) => `jnp.asarray(${v}, dtype=${jdt})`;
+  if (spec === "nv_dbinom") {
+    const fn = f.log ? "binom.logpmf" : "binom.pmf";
+    const args = `jnp.full(n, prob, dtype=${jdt}), ${typed("x")}, ${typed("size")}`;
+    return kind === "value"
+      ? [
+        `f = jax.jit(lambda p, k, size: ${fn}(k, size, p))  # swept in prob, as the harness does`,
+        `jax_value = float(f(${args})[0])`,
+      ]
+      : [
+        `g = jax.jit(jax.vmap(jax.grad(lambda p, k, size: ${fn}(k, size, p)), in_axes=(0, None, None)))`,
+        `jax_value = float(g(${args})[0])`,
+      ];
+  }
+  const lower = f.lower_tail !== false;
+  const [below, above] = lower ? ["0.0", "1.0"] : ["1.0", "0.0"];
+  return [
+    "def cdf(q, size, prob):  # the harness's twin: no binom.cdf in jax.scipy.stats",
+    "    k = jnp.floor(q + 1e-7)  # base R's count",
+    "    inside = (k >= 0) & (k < size)",
+    "    kk = jnp.where(inside, k, 0)",
+    lower
+      ? "    v = betainc(size - kk, kk + 1, 1 - prob)  # P(X <= k) = I_(1 - p)(n - k, k + 1)"
+      : "    v = betainc(kk + 1, size - kk, prob)  # P(X > k) = I_p(k + 1, n - k)",
+    `    v = jnp.where(k < 0, ${below}, jnp.where(k >= size, ${above}, v))`,
+    "    v = jnp.where(jnp.isnan(q), jnp.nan, v)",
+    `    return ${f.log_p ? "jnp.log(v)" : "v"}`,
+    `jax_value = float(jax.jit(cdf)(jnp.full(n, x, dtype=${jdt}), ${typed("size")}, ${typed("prob")})[0])`,
+  ];
+}
+
 // --- the snippet --------------------------------------------------------------
 
 /**
@@ -422,6 +576,10 @@ export function snippet(ctx) {
   const plain = isDefault && !differ;  // the call can leave every parameter at its default
 
   const P = sp.params;
+  // The swept input's variable (x everywhere but the binomial density, which
+  // is swept in prob), and every argument in the function's own order.
+  const V = sp.variable ?? "x";
+  const sig = sp.sig ?? [sp.arg, ...P];
   const pyName = (k) => PY_NAME[k] ?? k;
   const flagsR = sp.flags.map((k) => `${k} = ${f[k] ? "TRUE" : "FALSE"}`).join(", ");
   const baseFlags = sp.flags.map((k) => `${BASE_FLAG[k]} = ${f[k] ? "TRUE" : "FALSE"}`).join(", ");
@@ -444,19 +602,19 @@ export function snippet(ctx) {
     ].filter((l) => l !== null);
   };
 
-  // The truth in R, shared by both languages' snippets.
-  const t = truthR(r.spec, kind, output, f);
   // How the reference's parameters are named in R: literals where the snippet
   // leaves the function's defaults implicit (a bare `mean` would be base::mean).
   const refExpr = (k) => (differ ? `ref_${k}` : isDefault ? rParam(refP[k]) : k);
+  // The truth in R, shared by both languages' snippets.
+  const t = truthR(r.spec, kind, output, f, refExpr);
   const refLits = P.map((k) => `${MP_NAME[k]} <- Rmpfr::mpfr(${refExpr(k)}, ${PREC})`);
   const refDouble = sp.params === UNIF ? [`a <- ${refExpr("min")}; b <- ${refExpr("max")}`] : [];
   const truthBlock = [
     `# the true value, to ${PREC} bits (Rmpfr); evaluated only at a finite input`,
     ...t.helpers,
     `mpfr_value <- NA_real_`,
-    `if (is.finite(x)) {`,
-    `  X <- Rmpfr::mpfr(x, ${PREC})`,
+    `if (is.finite(${V})) {`,
+    `  X <- Rmpfr::mpfr(${V}, ${PREC})`,
     ...refLits.map((l) => "  " + l),
     ...refDouble.map((l) => "  " + l),
     ...t.lines.map((l) => "  " + l),
@@ -474,23 +632,30 @@ export function snippet(ctx) {
     }
     return [`${pyAssign()}${differ ? "  # as the harness passes them; rounded to f32 by the array's dtype" : ""}`];
   };
-  const refArgs = plain ? "" : P.map((k) => `, ${differ ? "ref_" : ""}${k}`).join("");
-  const baseCall = `${sp.base}(x${refArgs}, ${baseFlags})`;
+  const refArg = (k) => (k === sp.arg ? V : `${differ ? "ref_" : ""}${k}`);
+  const baseCall = `${sp.base}(${(plain ? [sp.arg] : sig).map(refArg).join(", ")}, ${baseFlags})`;
   const xComment = rNum(x) === dec(x) ? "" : `  # ${dec(x)}, written exactly: R's decimal parser is not correctly rounded everywhere`;
 
   // anvl's own evaluation, which the JAX snippet runs too: anvl is the
   // subject, and where JAX is out is exactly where anvl is worth a look.
-  const beArgs = plain ? "" : P.map((k) => `, ${k}`).join("");
+  // Each argument as the harness passes it: the swept one as a batch, a
+  // parameter as a bare R value (a scalar array of the cell's dtype where the
+  // harness makes one), and for a gradient every parameter as a batch.
+  const swept = `nv_array(rep(${V}, n), dtype = "${dtype}")`;
+  const valueArg = (k) => (k === sp.arg ? swept : sp.scalar?.includes(k) ? `nv_scalar(${k}, dtype = "${dtype}")` : k);
+  const gradArg = (k) => (k === sp.arg ? swept
+    : sp.gradScalar?.includes(k) ? `nv_scalar(${k}, dtype = "${dtype}")`
+      : `nv_array(rep(${plain ? rParam(beP[k]) : k}, n), dtype = "${dtype}")`);
+  const wrt = sp.wrt ?? sig;
   const call = kind === "value"
-      ? [`anvl_value <- as.double(${r.spec}(nv_array(rep(x, n), dtype = "${dtype}")${beArgs}, ${flagsR}))[1]`]
+      ? [`anvl_value <- as.double(${r.spec}(${(plain ? [sp.arg] : sig).map(valueArg).join(", ")}, ${flagsR}))[1]`]
       : [
         `grad_fn <- jit(gradient(`,
-        `  \\(${[sp.arg, ...P].join(", ")}) sum(${r.spec}(${[sp.arg, ...P].join(", ")}, ${flagsR})),`,
-        `  wrt = c(${[sp.arg, ...P].map((k) => `"${k}"`).join(", ")})`,
+        `  \\(${sig.join(", ")}) sum(${r.spec}(${sig.join(", ")}, ${flagsR})),`,
+        `  wrt = ${wrt.length === 1 ? `"${wrt[0]}"` : `c(${wrt.map((k) => `"${k}"`).join(", ")})`}`,
         `))`,
         `g <- grad_fn(`,
-        `  nv_array(rep(x, n), dtype = "${dtype}"),`,
-        ...P.map((k, i) => `  nv_array(rep(${plain ? rParam(beP[k]) : k}, n), dtype = "${dtype}")${i < P.length - 1 ? "," : ""}`),
+        ...sig.map((k, i) => `  ${gradArg(k)}${i < sig.length - 1 ? "," : ""}`),
         `)`,
         `anvl_value <- as.double(g$${output})[1]`,
       ];
@@ -501,7 +666,7 @@ export function snippet(ctx) {
       "",
       "library(anvl)",
       "",
-      `x <- ${rNum(x)}${xComment}`,
+      `${V} <- ${rNum(x)}${xComment}`,
       ...paramLines("R"),
       BATCH_R,
       ...call,
@@ -528,7 +693,7 @@ export function snippet(ctx) {
     uniform: "  # restated in (min, max) before differentiating",
     expon: "  # in terms of the rate, as the harness differentiates it",
   }[sp.jax];
-  const jaxCall = kind === "value"
+  const jaxCall = sp.jaxTyped ? binomJax(r.spec, kind, f, jdt) : kind === "value"
     ? [`jax_value = float(${fn}(jnp.full(n, x, dtype=${jdt}), ${sp.jaxArgs})[0])`]
     : [
       restated
@@ -539,7 +704,7 @@ export function snippet(ctx) {
     ];
   const rCode = [
     "library(anvl)",
-    `x <- ${rNum(x)}`,
+    `${V} <- ${rNum(x)}`,
     ...paramLines("R"),
     BATCH_R,
     ...call,
@@ -556,9 +721,9 @@ export function snippet(ctx) {
     "import jax",
     'jax.config.update("jax_enable_x64", True)  # before any array exists, or f64 silently becomes f32',
     "import jax.numpy as jnp",
-    `from jax.scipy.stats import ${sp.jax}`,
+    sp.jaxImport ?? `from jax.scipy.stats import ${sp.jax}`,
     "",
-    `x = ${pyNum(x)}`,
+    `${V} = ${pyNum(x)}`,
     ...paramLines("Python"),
     BATCH_PY,
     ...jaxCall,
