@@ -314,8 +314,18 @@ Then choose:
   end of the campaign better and cost a few seconds each in overhead.
 - `MAX_PARTS`: how finely an unmeasured cell is cut. At full depth a cell has
   2048 chunks, so up to 2048.
-- `MEM_PER_TASK`: a worker compiles many cells over its life. Measure peak
-  memory with `./calibrate.sh report`.
+- `WORKER_MAX_MEMORY` and `MEM_PER_TASK`: a worker's memory creeps up over
+  its life, a few MB a cell, cause unknown (anvl's and JAX's compilation
+  caches and glibc's allocator were each ruled out). So past
+  `WORKER_MAX_MEMORY` MB, checked after each part, the worker process stops
+  at the part boundary and a fresh one takes over *inside the same job*: a
+  shell loop in `slurm-work.sbatch` starts it, so the allocation is kept and
+  nothing goes back to the queue. The job's log says `== restart N` each time
+  and the total at the end, `sacct` shows each process as a step of the job,
+  and `check.sh` counts restarts across the pool. `MEM_PER_TASK` must cover
+  the threshold, a part's transient peak (~400 MB) and what `sacct` counts
+  beyond the worker itself (~300 MB): 1500 MB and `2560M` by default. Check a
+  campaign's peaks with `sacct` or `./calibrate.sh report`.
 
 ## Cores per task
 
@@ -359,7 +369,11 @@ The checks, which you can also run by hand:
 
 1. Inspect scheduler state and worker logs. Every worker should end in
    `worker done:`, with the reason it stopped; inspect `ERROR` lines. A zero
-   exit code alone is insufficient.
+   exit code alone is insufficient. `check.sh` also reports the workers' peak
+   memory as Slurm measured it (`sacct` MaxRSS) against `MEM_PER_TASK`: a
+   failure if any worker was killed for memory, a warning if any came within
+   10% of the limit, and, when there is room, a lower `MEM_PER_TASK` that
+   would still leave 20% headroom.
 2. Inspect the queue with `anvl-sweep queue --queue /sweeps/queues/<queue>`
    under the same container bindings: how many cells are assembled, how many
    parts are done, running, stale, errored or not started, and the core-hours

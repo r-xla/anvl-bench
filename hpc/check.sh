@@ -2,9 +2,10 @@
 # ---------------------------------------------------------------------------
 # Is the campaign complete enough to export? Step 4 of the workflow, in one go:
 #
-#   1. Slurm         every worker and validation task COMPLETED
-#   2. worker logs   every worker reached its "worker done:" line; no part
-#                    ERRORed and every cell assembled
+#   1. Slurm         every worker and validation task COMPLETED; the
+#                    workers' peak memory against MEM_PER_TASK
+#   2. worker logs   every worker's last process reached its "worker done:"
+#                    line; no part ERRORed; how many memory restarts there were
 #   3. the queue     every part done, every cell assembled (anvl-sweep queue)
 #   4. validation    every shard reached its final line; no reference FAILed
 #   5. the store     anvl-sweep status: coverage at $DEPTH, errors, references
@@ -66,7 +67,7 @@ older() { [[ "$1" != "${LAST}"* ]]; }
 echo "queue ${Q}, worker arrays ${ARRAYS:-(none)}, validation array ${V:-(none)}, depth ${DEPTH}, logs ${LOGS}"
 
 # ---- 1. Slurm -------------------------------------------------------------
-section "Slurm task states"
+section "Slurm task states and memory"
 if command -v sacct >/dev/null 2>&1; then
   ids="${ARRAYS}${V:+${ARRAYS:+,}${V}}"
   bad=$(sacct -j "${ids}" -X --noheader -P --format=JobID,JobName,State,ExitCode 2>/dev/null \
@@ -86,8 +87,60 @@ if command -v sacct >/dev/null 2>&1; then
     warn "tasks of earlier worker pools not COMPLETED (see section 3 for what is still missing):"
     echo "${old}" | sed 's/^/          /'
   fi
+
+  # Each worker's peak memory as Slurm measured it -- MaxRSS, the largest over
+  # the job's steps (one per worker process) -- which is what MEM_PER_TASK is
+  # enforced against. Worker logs carry each process's own peak too, but they
+  # miss the container runtime and the heartbeat loop that Slurm counts.
+  if [[ -n "${ARRAYS}" ]]; then
+    limit=$(echo "${MEM_PER_TASK}" | awk '{v = $0 + 0; u = toupper(substr($0, length($0)));
+      if (u == "G") v *= 1024; else if (u == "T") v *= 1048576; else if (u == "K") v /= 1024; print v}')
+    mem=$(sacct -j "${ARRAYS}" --noheader -P --format=JobID,MaxRSS,State 2>/dev/null | awk -F'|' -v lim="${limit}" '
+      function mb(r,   v, u) {
+        v = r + 0; u = substr(r, length(r))
+        if (u == "K") return v / 1024
+        if (u == "G") return v * 1024
+        if (u == "M") return v
+        return v / 1048576
+      }
+      {
+        task = $1; sub(/\..*/, "", task)
+        if (!(task in peak)) peak[task] = 0
+        if ($2 != "" && mb($2) > peak[task]) peak[task] = mb($2)
+        if ($3 ~ /OUT_OF_ME/) oom[task] = 1
+      }
+      END {
+        for (t in peak) if (peak[t] > 0) {
+          n++
+          for (i = n; i > 1 && p[i - 1] > peak[t]; i--) p[i] = p[i - 1]
+          p[i] = peak[t]
+          if (peak[t] > 0.9 * lim) near++
+        }
+        for (t in oom) k++
+        if (!n) exit
+        # a suggestion with 20% headroom over the largest peak, in 256 MB steps
+        s = int((p[n] * 1.2 + 255) / 256) * 256
+        printf "%d %.0f %.0f %d %d %d\n", n, p[int((n + 1) / 2)], p[n], near + 0, k + 0, s
+      }')
+    if [[ -z "${mem}" ]]; then
+      warn "no memory figures from sacct for ${ARRAYS}"
+    else
+      read -r n_w med max near n_oom sugg <<<"${mem}"
+      line="worker peak memory (sacct MaxRSS): median ${med} MB, max ${max} MB, against MEM_PER_TASK=${MEM_PER_TASK} (${limit%.*} MB): the largest used $((100 * max / ${limit%.*}))%"
+      if ((n_oom > 0)); then
+        fail "${line}; ${n_oom} worker(s) killed for memory -- raise MEM_PER_TASK, or lower WORKER_MAX_MEMORY"
+      elif ((near > 0)); then
+        warn "${line}; ${near} of ${n_w} workers above 90% -- MEM_PER_TASK=\"${sugg}M\" would leave 20% headroom"
+      elif ((sugg < ${limit%.*})); then
+        ok "${line}"
+        echo "        MEM_PER_TASK=\"${sugg}M\" would still leave 20% headroom over the largest peak"
+      else
+        ok "${line}"
+      fi
+    fi
+  fi
 else
-  warn "sacct not available; skipping scheduler states"
+  warn "sacct not available; skipping scheduler states and memory"
 fi
 
 # ---- 2. worker logs -------------------------------------------------------
@@ -99,7 +152,12 @@ done
 if ((${#wlogs[@]} == 0)); then
   fail "no worker logs for arrays ${ARRAYS:-(none)}"
 else
-  unfinished=$(grep -L '^worker done:' "${wlogs[@]}" | sed -E "s|^${LOGS}/work-||; s|\.out$||")
+  # A job's log can hold several worker processes -- one per memory restart --
+  # and it is the last of them that must have reached 'worker done:'.
+  unfinished=$(for f in "${wlogs[@]}"; do
+    awk '/^worker done:/ {ok = 1} /^== restart / {ok = 0} END {exit !ok}' "${f}" \
+      || echo "${f}" | sed -E "s|^${LOGS}/work-||; s|\.out$||"
+  done)
   if [[ -z "${unfinished}" ]]; then
     ok "all ${#wlogs[@]} workers reached 'worker done:'"
   fi
@@ -114,6 +172,8 @@ else
   read -r n_ok n_err < <(cat "${wlogs[@]}" \
     | awk '/^worker done:/ {ok += $3; err += $6} END {print ok + 0, err + 0}')
   echo "        ${n_ok} parts ok, ${n_err} errored"
+  echo "        $(cat "${wlogs[@]}" | grep -c '^== restart ') restart(s) of a worker process past WORKER_MAX_MEMORY," \
+    "in $(grep -l '^== restart ' "${wlogs[@]}" | wc -l | tr -d ' ') of ${#wlogs[@]} workers"
   echo "        why workers stopped: $(cat "${wlogs[@]}" | sed -n 's/^worker done:.*stopped because //p' \
     | sort | uniq -c | awk '{n = $1; $1 = ""; printf "%s x%d; ", substr($0, 2), n}')"
   if ((n_err > 0)); then
@@ -128,10 +188,19 @@ else
     warn "$(cat "${wlogs[@]}" | grep -c 'WARNING: its parts ran on') cell(s) whose parts ran on different CPU models:"
     grep -h -B1 'WARNING: its parts ran on' "${wlogs[@]}" | grep -v '^--$' | head -n 10 | sed 's/^ */          /'
   fi
-  errfiles=$(for f in "${wlogs[@]}"; do e="${f%.out}.err"; [[ -s "${e}" ]] && echo "${e}"; done)
-  if [[ -n "${errfiles}" ]]; then
-    warn "$(echo "${errfiles}" | wc -l | tr -d " ") non-empty .err file(s); distinct lines, most frequent first:"
-    echo "${errfiles}" | xargs cat | sort | uniq -c | sort -rn | head -n 10 \
+  # srun reports every memory restart as "Exited with exit code 3": that is the
+  # restart signal working, not an error, and would crowd real lines out.
+  errlines() {
+    for f in "${wlogs[@]}"; do e="${f%.out}.err"; [[ -s "${e}" ]] && cat "${e}"; done \
+      | grep -v 'task 0: Exited with exit code 3$'
+  }
+  n_errfiles=$(for f in "${wlogs[@]}"; do
+    e="${f%.out}.err"
+    [[ -s "${e}" ]] && grep -qv 'task 0: Exited with exit code 3$' "${e}" && echo "${e}"
+  done | wc -l | tr -d " ")
+  if ((n_errfiles > 0)); then
+    warn "${n_errfiles} .err file(s) with more than restart notices; distinct lines, most frequent first:"
+    errlines | sort | uniq -c | sort -rn | head -n 10 \
       | awk '{n = $1; $1 = ""; printf "          %6d x %s\n", n, substr($0, 2, 100)}'
   fi
 fi

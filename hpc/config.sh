@@ -45,20 +45,28 @@ QOS=""                               # optional; leave empty to omit
 # worker stops claiming parts it cannot finish inside WALLTIME, so a shorter
 # walltime costs nothing but more, shorter jobs -- pick what your partition
 # schedules quickly.
-WORKERS=256                          # array tasks, one worker each
+WORKERS=768                          # array tasks, one worker each
 WORKER_LIMIT=""                      # optional: at most this many at once (%K)
 CPUS_PER_TASK=1
-MEM_PER_TASK="4G"                    # a worker compiles many cells in its life
+MEM_PER_TASK="2560M"                 # WORKER_MAX_MEMORY + a part's peak + slack
+# A worker's memory creeps up over its life by a few MB a cell, cause unknown.
+# Past WORKER_MAX_MEMORY MB (resident, checked after each part) the worker
+# process stops and a fresh one takes over in the same job, so memory stays
+# bounded. MEM_PER_TASK must cover it plus a part's transient peak (~400 MB)
+# plus what sacct counts beyond the worker (~300 MB). Empty = never restart.
+WORKER_MAX_MEMORY=1500
 WALLTIME="48:00:00"                  # per worker
 MERGE_WALLTIME="04:00:00"
 
 # How cells are cut into parts. A cell is cut into parts of about UNIT_MINUTES
 # of compute, from what it cost before (COSTS); a cell never measured is cut
-# into MAX_PARTS. A claim whose heartbeat is older than STALE_MINUTES belongs to
-# a dead worker and is taken over: keep it above the slowest single chunk.
+# into MAX_PARTS. A worker's claim is touched every minute while the worker
+# lives, however long its chunks take; a claim untouched for STALE_MINUTES
+# belongs to a dead worker (out of memory, say) and is taken over. Keep it a
+# few minutes above 1, to allow for clocks that differ between nodes.
 UNIT_MINUTES=15
 MAX_PARTS=256
-STALE_MINUTES=30
+STALE_MINUTES=10
 # What cells cost before, to size their parts: paths INSIDE the container,
 # comma-separated, IN ORDER OF PRIORITY -- a later source overrides earlier
 # ones for the cells it measured. The container sees SWEEP_ROOT as /sweeps,

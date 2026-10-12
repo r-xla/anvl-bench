@@ -80,20 +80,50 @@ echo "== worker ${SLURM_ARRAY_TASK_ID:-1}/${WORKERS} of queue ${QUEUE_NAME} on $
 # has to be set with --home: Singularity refuses `--env HOME=...` with only a
 # warning in the .err file and leaves HOME as your real home directory.
 #
+# The SLURM_* job identity is passed in by name because --cleanenv strips it:
+# the worker writes it into every claim, so a dead worker's parts can be traced
+# to its array task.
+#
 # The thread-count variables are pinned to 1, not to CPUS_PER_TASK: they reach
 # R's BLAS, which this workload barely touches, and a BLAS pool sized to the
 # whole allocation would just contend with XLA's pool for the same cores.
-"${SRUN[@]}" "${SINGULARITY}" exec --cleanenv \
-  --bind "${SWEEP_ROOT}:/sweeps" \
-  --env "NV_SWEEP_STORE=/sweeps/parts/${QUEUE_NAME}" \
-  --env "NV_SWEEP_DEVICE=cpu" \
-  --home "${SWEEP_ROOT}/home" \
-  --env "TMPDIR=/sweeps/tmp" \
-  --env "OMP_NUM_THREADS=1" \
-  --env "OPENBLAS_NUM_THREADS=1" \
-  --env "XLA_FLAGS=--xla_force_host_platform_device_count=1" \
-  "${SIF}" \
-  anvl-sweep work \
-    --queue "/sweeps/queues/${QUEUE_NAME}" \
-    --until "${until}" \
-    --stale-minutes "${STALE_MINUTES}"
+# The worker runs in a loop. Its memory creeps up over its life by a few MB a
+# cell (no cause found), so past WORKER_MAX_MEMORY MB it stops after the part
+# it is on and exits with status 3, and a fresh R process -- which starts clean
+# -- takes over in this same job: same allocation, no return to the queue. Any
+# other exit ends the job: the queue is empty, nothing fits before the
+# deadline, or something failed. Each R process is one step in sacct.
+restarts=0
+while true; do
+  set +e
+  "${SRUN[@]}" "${SINGULARITY}" exec --cleanenv \
+    --bind "${SWEEP_ROOT}:/sweeps" \
+    --env "NV_SWEEP_STORE=/sweeps/parts/${QUEUE_NAME}" \
+    --env "NV_SWEEP_DEVICE=cpu" \
+    --home "${SWEEP_ROOT}/home" \
+    --env "TMPDIR=/sweeps/tmp" \
+    --env "OMP_NUM_THREADS=1" \
+    --env "OPENBLAS_NUM_THREADS=1" \
+    --env "XLA_FLAGS=--xla_force_host_platform_device_count=1" \
+    --env "SLURM_JOB_ID=${SLURM_JOB_ID}" \
+    --env "SLURM_ARRAY_JOB_ID=${SLURM_ARRAY_JOB_ID:-}" \
+    --env "SLURM_ARRAY_TASK_ID=${SLURM_ARRAY_TASK_ID:-}" \
+    "${SIF}" \
+    anvl-sweep work \
+      --queue "/sweeps/queues/${QUEUE_NAME}" \
+      --until "${until}" \
+      --stale-minutes "${STALE_MINUTES}" \
+      ${WORKER_MAX_MEMORY:+--max-memory "${WORKER_MAX_MEMORY}"}
+  rc=$?
+  set -e
+  # a restart with under ten minutes left would only start up and leave
+  if ((rc == 3 && $(date +%s) < until - 600)); then
+    restarts=$((restarts + 1))
+    echo "== restart ${restarts}: a fresh worker process takes over (memory passed ${WORKER_MAX_MEMORY} MB)"
+    continue
+  fi
+  break
+done
+echo "== worker ${SLURM_ARRAY_TASK_ID:-1} finished after ${restarts} restart(s)"
+if ((rc == 3)); then rc=0; fi
+exit "${rc}"
