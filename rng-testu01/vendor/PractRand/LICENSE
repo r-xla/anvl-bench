@@ -1,0 +1,9 @@
+PractRand (Practically Random), pre-0.95, by Chris Doty-Humphrey.
+
+PractRand is in the public domain, as its project page states:
+https://sourceforge.net/projects/pracrand/ ("License: Public Domain").
+
+The files in this directory are the `include/`, `src/` and `tools/`
+directories of
+https://downloads.sourceforge.net/project/pracrand/PractRand-pre0.95.zip,
+unmodified. The archive itself contains no license file.
