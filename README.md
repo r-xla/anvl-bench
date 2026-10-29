@@ -81,6 +81,18 @@ parser is not correctly rounded on every platform (on Apple Silicon most
 17-digit literals parse to a neighbouring double). `js/snippet.js` ports the
 harness's calls and MPFR truths; keep it in step with the sweeps.
 
+After changing `js/snippet.js`, check that every snippet it already made is
+unchanged, against the deployed export:
+
+```bash
+node tools/snippet-regress.mjs hpc/dist/<artifact>.zip --base HEAD
+```
+
+It generates every result's snippets for its two worst inputs and a few fixed
+probes, with `js/` as committed at `--base` and as it is in the working tree,
+and fails if any differ. A spec the export has no results for yet makes no
+snippets here, so run a new spec's snippets by hand.
+
 ## Comparing with JAX
 
 When an artifact also holds JAX results (the harness's `--backends anvl,jax`),
@@ -295,6 +307,7 @@ js/app.js               router and views
 js/snippet.js           the copy-to-clipboard reproduction scripts
 tools/serve.mjs         range-capable dev server
 tools/build-data-index.mjs
+tools/snippet-regress.mjs  checks a snippet.js change against an export
 .github/workflows/deploy.yml
 ```
 
