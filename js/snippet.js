@@ -96,9 +96,10 @@ function hexToNum(s) {
 // --- what each function is ----------------------------------------------
 
 // The parameter sets as the harness writes them (NORM_PARAMS, UNIF_INTERVALS,
-// EXP_PARAMS, BINOM_D_PARAMS, BINOM_PQ_PARAMS), per family since set names
-// repeat across families (and within the binomial, where the density's
-// `large` is not the distribution function's): the backend
+// EXP_PARAMS, BINOM_D_PARAMS, BINOM_PQ_PARAMS, POIS_D_PARAMS, POIS_PQ_PARAMS),
+// per family since set names repeat across families (and within the binomial
+// and the Poisson, where the density's `large` is not the distribution
+// function's): the backend
 // is handed these doubles, whatever the cell's precision. Each is the same
 // correctly rounded product of doubles in JS as in R.
 const NORM_SETS = { standard: { mean: 0, sd: 1 }, shifted: { mean: -Math.PI, sd: 2 * Math.PI } };
@@ -113,14 +114,19 @@ const BINOM_PQ_SETS = {
   small: { size: 20, prob: 0.3 }, large: { size: 1e6, prob: 0.3 },
   skewed: { size: 1e6, prob: 1e-3 }, rare: { size: 1e10, prob: 1e-10 },
 };
+const POIS_D_SETS = { at_zero: { x: 0 }, one: { x: 1 }, tabulated: { x: 3 }, large: { x: 1e6 } };
+// tiny is 1e-30 correctly rounded, which the harness writes in hex: R reads
+// the literal 1e-30 one ulp low on Apple Silicon.
+const POIS_PQ_SETS = { tiny: { lambda: 1e-30 }, small: { lambda: 4 }, moderate: { lambda: 1e3 }, large: { lambda: 1e6 } };
 
 // Each parameter's default in the anvl and base R signatures, and its name in
 // the MPFR truth. Python avoids min and max, which would shadow the builtins
-// the scoring uses. The binomial's parameters have no defaults; its count x is
-// K in the truth, since X is always the swept input.
+// the scoring uses, and lambda, which is a keyword there. The binomial's and
+// the Poisson's parameters have no defaults; their count x is K in the truth,
+// since X is always the swept input.
 const DEFAULT = { mean: 0, sd: 1, min: 0, max: 1, rate: 1 };
-const MP_NAME = { mean: "M", sd: "S", min: "A", max: "B", rate: "R", x: "K", size: "N", prob: "P" };
-const PY_NAME = { min: "mn", max: "mx" };
+const MP_NAME = { mean: "M", sd: "S", min: "A", max: "B", rate: "R", x: "K", size: "N", prob: "P", lambda: "L" };
+const PY_NAME = { min: "mn", max: "mx", lambda: "lam" };
 
 // The binomial probabilities as the harness writes them: each short decimal was
 // checked to parse to exactly the same double as its hex form in R on Apple
@@ -155,6 +161,15 @@ const EXPO_JAX = { jax: "expon", jaxArgs: "scale=1 / rate", sets: EXP_SETS };
 //     quantile twin.
 const BINOM = ["size", "prob"];
 const BINOM_PQ = { params: BINOM, sets: BINOM_PQ_SETS, jaxTyped: true };
+// The Poisson follows the binomial (sweeps/_poisson.R, dpois.R, ppois.R,
+// qpois.R): the density is swept in lambda with the count an nv_scalar(); the
+// distribution function's gradient is taken in lambda alone, as a batch; every
+// JAX twin takes lambda at the cell's precision, the distribution function's
+// being the harness's gammainc/gammaincc formula (poisJax()); and there is no
+// quantile twin. `gradBound` is the gradient reference's declared bound, where
+// it is not the 16 ulp of the normal family.
+const POIS = ["lambda"];
+const POIS_PQ = { params: POIS, sets: POIS_PQ_SETS };
 const SPECS = {
   nv_dnorm: { arg: "x", params: NORM, base: "dnorm", flags: ["log"], ...NORM_JAX },
   nv_pnorm: { arg: "q", params: NORM, base: "pnorm", flags: ["lower_tail", "log_p"], ...NORM_JAX },
@@ -175,6 +190,16 @@ const SPECS = {
     jax: "betainc", jaxImport: "from jax.scipy.special import betainc",
   },
   nv_qbinom: { arg: "p", base: "qbinom", flags: ["lower_tail", "log_p"], ...BINOM_PQ },
+  nv_dpois: {
+    arg: "lambda", variable: "lambda", params: ["x"], sig: ["x", "lambda"], base: "dpois", flags: ["log"],
+    sets: POIS_D_SETS, scalar: ["x"], gradScalar: ["x"], wrt: ["lambda"], gradBound: 4096,
+    jax: "poisson", jaxImport: "from jax.scipy.stats import poisson", jaxTyped: true, jaxTwin: poisJax,
+  },
+  nv_ppois: {
+    arg: "q", base: "ppois", flags: ["lower_tail", "log_p"], ...POIS_PQ, wrt: ["lambda"], gradBound: 256,
+    jax: "gammainc", jaxImport: "from jax.scipy.special import gammainc, gammaincc", jaxTyped: true, jaxTwin: poisJax,
+  },
+  nv_qpois: { arg: "p", base: "qpois", flags: ["lower_tail", "log_p"], ...POIS_PQ },
 };
 
 const BASE_FLAG = { log: "log", lower_tail: "lower.tail", log_p: "log.p" };
@@ -208,7 +233,8 @@ function jaxFn(spec, f) {
 // --- the 256-bit truth ----------------------------------------------------
 //
 // Ported from the harness's own MPFR truths (ref_grad_mpfr, ref_stable_mpfr
-// and the helpers in _normal.R and _exponential.R), for one finite input. The
+// and the helpers in _normal.R, _exponential.R and _poisson.R), for one finite
+// input. The
 // value truths for which the harness has no MPFR function are the same
 // mathematics. Parameters are the reference's (X, and M/S, A/B or R, all
 // exact mpfr of doubles).
@@ -271,6 +297,72 @@ const HELPERS = {
   k <- q0
   while (k > 0 && passes(k - 1)) k <- k - 1
   while (!passes(k)) k <- k + 1
+  k
+}`,
+  // mp_pois_parts' log density: by lgamma, exact enough at 256 bits even at
+  // lgamma(1e6 + 1)
+  poisLd: `pois_ld <- function(J, L) J * log(L) - L - lgamma(J + 1)  # log dpois(J; L): J whole >= 0, L > 0`,
+  // mp_pois_parts, for one count: the incomplete gamma function of k + 1 at
+  // lambda, by its series where lambda < k + 2 and Lentz's continued fraction
+  // otherwise, each on its convergent side. Both come out as a tail over p(k),
+  // never through exp of log p(k), which at k = 1e300 is ~-7e302.
+  poisParts: `pois_parts <- function(k, L) {  # log p(k), both log tails, and the tail summed over p(k); whole k >= 0
+  K <- Rmpfr::mpfr(k, ${PREC})
+  a <- K + 1
+  ld <- pois_ld(K, L)
+  tol <- 2^(10 - ${PREC})
+  series <- Rmpfr::asNumeric(L) < k + 2
+  if (series) {  # P(X > k) / p(k) = (L / a)(1 + L / (a + 1) + L^2 / ((a + 1)(a + 2)) + ...)
+    total <- Rmpfr::mpfr(1, ${PREC})
+    last <- total
+    n0 <- 0
+    repeat {
+      t <- last * cumprod(L / (a + seq(n0 + 1, n0 + 4096)))
+      total <- total + sum(t)
+      last <- t[4096]
+      n0 <- n0 + 4096
+      if (last < tol * total) break
+    }
+    ratio <- L / a * total
+    upper <- ld + log(ratio)
+    lower <- log1mexp(upper)
+  } else {  # P(X <= k) / p(k) = L h, h Lentz's continued fraction for Q(a, L)
+    b <- L + 1 - a
+    cc <- Rmpfr::mpfr(2, ${PREC})^1000
+    d <- 1 / b
+    h <- d
+    i <- 0
+    repeat {
+      i <- i + 1
+      an <- -i * (i - a)
+      b <- b + 2
+      d <- 1 / (an * d + b)
+      cc <- b + an / cc
+      del <- d * cc
+      h <- h * del
+      if (abs(del - 1) < tol) break
+    }
+    ratio <- L * h
+    lower <- ld + log(ratio)
+    upper <- log1mexp(lower)
+  }
+  list(ld = ld, series = series, ratio = ratio, lower = lower, upper = upper)
+}`,
+  // As binomQuantile, but unbounded, and stepping a float at a time above
+  // 2^53, where not every count is a float; nv_qpois() answers with the least
+  // float that passes there.
+  poisQuantile: `pois_quantile <- function(q0, t, L, lower) {  # q0 a starting answer, t the target log probability
+  if (!is.finite(q0)) return(q0)
+  passes <- function(k) {
+    v <- pois_parts(k, L)[[if (lower) "lower" else "upper"]]
+    if (lower) v >= t else v <= t
+  }
+  e <- function(k) floor(log2(k))
+  down <- function(k) if (k <= 2^53) k - 1 else k - 2^(e(k) - 52 - (k == 2^e(k)))
+  up <- function(k) if (k < 2^53) k + 1 else k + 2^(e(k) - 52)
+  k <- q0
+  while (k > 0 && passes(down(k))) k <- down(k)
+  while (!passes(k)) k <- up(k)
   k
 }`,
 };
@@ -450,8 +542,48 @@ function truthR(spec, kind, output, f, refName = (k) => k) {
     const lt = lower ? "TRUE" : "FALSE";
     L.push(`q0 <- suppressWarnings(qbinom(x, ${refName("size")}, ${refName("prob")}, lower.tail = ${lt}, log.p = ${f.log_p ? "TRUE" : "FALSE"}))  # base R's start`);
     expr = `if (${inRange}) Rmpfr::mpfr(binom_quantile(q0, ${f.log_p ? "X" : "log(X)"}, N, P, lower = ${lt}), ${PREC}) else Rmpfr::mpfr(NaN, ${PREC})`;
+  } else if (spec === "nv_dpois") {
+    // swept in lambda, so X is the mean and K the count; lambda the double
+    const at0 = kind === "value"
+      ? (f.log ? "if (K == 0) 0 else -Inf" : "if (K == 0) 1 else 0")
+      : (f.log ? "if (K == 0) -1 else Inf" : "if (K == 0) -1 else as.numeric(K == 1)");
+    h.add("poisLd");
+    L.push(`out <- if (lambda < 0) ${kind === "value" ? "NaN" : "0"}`);
+    L.push(`  else if (lambda == 0) ${at0}  # the limits at lambda = 0`);
+    if (kind === "value") {
+      L.push(`  else ${f.log ? "pois_ld(K, X)" : "exp(pois_ld(K, X))"}`);
+    } else {
+      // d/dlambda f = f (x - lambda) / lambda
+      L.push(`  else (K - X) / X${f.log ? "" : " * exp(pois_ld(K, X))"}`);
+    }
+    expr = `Rmpfr::mpfr(out, ${PREC})`;
+  } else if (spec === "nv_ppois") {
+    h.add("log1mexp"); h.add("poisLd"); h.add("poisParts");
+    L.push("k <- floor(x + 1e-7)  # the count, as base R takes it, in double");
+    if (kind === "value") {
+      // below the support, as base R resolves it
+      const below = lower ? (f.log_p ? "-Inf" : "0") : (f.log_p ? "0" : "1");
+      const tail = `pois_parts(k, L)$${lower ? "lower" : "upper"}`;
+      expr = `if (x < 0) Rmpfr::mpfr(${below}, ${PREC}) else ${f.log_p ? tail : `exp(${tail})`}`;
+    } else {
+      // -/+ p(k), over the tail on the log scale, from the summed ratio where
+      // it is that tail's; every derivative is 0 below q = 0
+      let d;
+      if (!f.log_p) d = `${lower ? "-" : ""}exp(m$ld)`;
+      else if (lower) d = "if (m$series) -exp(m$ld - m$lower) else -1 / m$ratio";
+      else d = "if (m$series) 1 / m$ratio else exp(m$ld - m$upper)";
+      L.push("m <- if (x >= 0) pois_parts(k, L)");
+      expr = `if (x < 0) Rmpfr::mpfr(0, ${PREC}) else ${d}`;
+    }
+  } else if (spec === "nv_qpois") {
+    h.add("log1mexp"); h.add("poisLd"); h.add("poisParts"); h.add("poisQuantile");
+    const inRange = f.log_p ? "x <= 0" : "x >= 0 && x <= 1";
+    const lt = lower ? "TRUE" : "FALSE";
+    L.push(`q0 <- suppressWarnings(qpois(x, ${refName("lambda")}, lower.tail = ${lt}, log.p = ${f.log_p ? "TRUE" : "FALSE"}))  # base R's start`);
+    L.push("if (!is.finite(q0)) q0 <- anvl_value  # base R overflows on the log scale below ~-9e307; start from anvl's answer");
+    expr = `if (${inRange}) Rmpfr::mpfr(pois_quantile(q0, ${f.log_p ? "X" : "log(X)"}, L, lower = ${lt}), ${PREC}) else Rmpfr::mpfr(NaN, ${PREC})`;
   }
-  const order = ["phi", "imills", "logPhi", "log1mexp", "binomLd", "binomTail", "binomQuantile"];
+  const order = ["phi", "imills", "logPhi", "log1mexp", "binomLd", "binomTail", "binomQuantile", "poisLd", "poisParts", "poisQuantile"];
   return { helpers: order.filter((k) => h.has(k)).map((k) => HELPERS[k]), lines: L, expr };
 }
 
@@ -545,6 +677,52 @@ function binomJax(spec, kind, f, jdt) {
   ];
 }
 
+// --- the Poisson's JAX twins ----------------------------------------------------
+//
+// As jax_pois() in sweeps/_poisson.R: the density's twin is logpmf/pmf with
+// lambda the traced argument, its gradient vmapped over lambda alone, and the
+// distribution function's the incomplete gamma formula SciPy's poisson.cdf and
+// poisson.sf use (Cephes pdtr and pdtrc), with base R's count, specialised here
+// to this cell's flags and differentiated in lambda. lambda and the count are
+// arrays at the cell's precision, as the harness passes them.
+function poisJax(spec, kind, f, jdt) {
+  const typed = (v) => `jnp.asarray(${v}, dtype=${jdt})`;
+  if (spec === "nv_dpois") {
+    const fn = f.log ? "poisson.logpmf" : "poisson.pmf";
+    const args = `jnp.full(n, lam, dtype=${jdt}), ${typed("x")}`;
+    return kind === "value"
+      ? [
+        `f = jax.jit(lambda lam, k: ${fn}(k, lam))  # swept in lambda, as the harness does`,
+        `jax_value = float(f(${args})[0])`,
+      ]
+      : [
+        `g = jax.jit(jax.vmap(jax.grad(lambda lam, k: ${fn}(k, lam)), in_axes=(0, None)))`,
+        `jax_value = float(g(${args})[0])`,
+      ];
+  }
+  const lower = f.lower_tail !== false;
+  const [below, above] = lower ? ["0.0", "1.0"] : ["1.0", "0.0"];
+  const args = `jnp.full(n, x, dtype=${jdt}), ${typed("lam")}`;
+  return [
+    "def cdf(q, lam):  # the harness's twin: poisson.cdf has no upper tail, no log scale and no 1e-7 fuzz",
+    "    k = jnp.floor(q + 1e-7)  # base R's count",
+    "    inside = (k >= 0) & (k < jnp.inf)",
+    "    kk = jnp.where(inside, k, 0)",
+    lower
+      ? "    v = gammaincc(kk + 1, lam)  # P(X <= k) = Q(k + 1, lambda)"
+      : "    v = gammainc(kk + 1, lam)  # P(X > k) = P(k + 1, lambda)",
+    `    v = jnp.where(k < 0, ${below}, jnp.where(k == jnp.inf, ${above}, v))`,
+    "    v = jnp.where(jnp.isnan(q), jnp.nan, v)",
+    `    return ${f.log_p ? "jnp.log(v)" : "v"}`,
+    ...(kind === "value"
+      ? [`jax_value = float(jax.jit(cdf)(${args})[0])`]
+      : [
+        "g = jax.jit(jax.vmap(jax.grad(cdf, argnums=1), in_axes=(0, None)))  # d/dlambda",
+        `jax_value = float(g(${args})[0])`,
+      ]),
+  ];
+}
+
 // --- the snippet --------------------------------------------------------------
 
 /**
@@ -576,8 +754,9 @@ export function snippet(ctx) {
   const plain = isDefault && !differ;  // the call can leave every parameter at its default
 
   const P = sp.params;
-  // The swept input's variable (x everywhere but the binomial density, which
-  // is swept in prob), and every argument in the function's own order.
+  // The swept input's variable (x everywhere but the binomial and Poisson
+  // densities, swept in prob and lambda), and every argument in the function's
+  // own order.
   const V = sp.variable ?? "x";
   const sig = sp.sig ?? [sp.arg, ...P];
   const pyName = (k) => PY_NAME[k] ?? k;
@@ -598,7 +777,7 @@ export function snippet(ctx) {
       `${c} ${ctx.where ? ctx.where + ": " : ""}${sp.arg} = ${dec(x)}${ctx.bits ? `  [bits ${ctx.bits}]` : ""}`,
       run ? `${c} Recorded on ${run.platform_key} (${run.cpu}), R ${run.r_version}, anvl ${run.anvl_version} @ ${String(run.anvl_sha ?? "").slice(0, 7)}, ${String(run.started_at ?? "").slice(0, 10)}:` : `${c} Recorded:`,
       ...(rec.length ? rec.map(([k, v]) => `${c}   ${k.padEnd(w)}  ${typeof v === "number" ? dec(v) : v}`) : [`${c}   (no figures recorded for this input)`]),
-      kind === "grad" ? `${c} The site scores gradients against the harness's double reference (within 16 ulp of f64 truth), so the MPFR comparison below can differ from the recorded figures in the last few f64 ulp.` : null,
+      kind === "grad" ? `${c} The site scores gradients against the harness's double reference (within ${sp.gradBound ?? 16} ulp of f64 truth), so the MPFR comparison below can differ from the recorded figures in the last few f64 ulp.` : null,
     ].filter((l) => l !== null);
   };
 
@@ -693,7 +872,7 @@ export function snippet(ctx) {
     uniform: "  # restated in (min, max) before differentiating",
     expon: "  # in terms of the rate, as the harness differentiates it",
   }[sp.jax];
-  const jaxCall = sp.jaxTyped ? binomJax(r.spec, kind, f, jdt) : kind === "value"
+  const jaxCall = sp.jaxTyped ? (sp.jaxTwin ?? binomJax)(r.spec, kind, f, jdt) : kind === "value"
     ? [`jax_value = float(${fn}(jnp.full(n, x, dtype=${jdt}), ${sp.jaxArgs})[0])`]
     : [
       restated
@@ -723,7 +902,7 @@ export function snippet(ctx) {
     "import jax.numpy as jnp",
     sp.jaxImport ?? `from jax.scipy.stats import ${sp.jax}`,
     "",
-    `${V} = ${pyNum(x)}`,
+    `${pyName(V)} = ${pyNum(x)}`,
     ...paramLines("Python"),
     BATCH_PY,
     ...jaxCall,
