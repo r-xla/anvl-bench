@@ -11,9 +11,9 @@ IMAGE_NAME="anvl-sweeps"
 # date tag changes the .sif path at midnight and the image built yesterday
 # stops being found. Bump it by hand when you build a new image, or override it
 # for one command:  IMAGE_TAG=v0.5.1 ./build.sh all
-IMAGE_TAG="${IMAGE_TAG:-v0.5.1}"
+IMAGE_TAG="${IMAGE_TAG:-v0.5.1-pois}"
 DOCKER_PLATFORM="linux/amd64"        # the cluster's arch, not the Mac's
-ANVL_REF="binom-dist"                # branch of louisaslett/anvl to build; it
+ANVL_REF="pois-dist"                 # branch of louisaslett/anvl to build; it
                                      # must carry the harness's work queue
 ANVL_REPO="https://github.com/louisaslett/anvl.git"
 
@@ -55,7 +55,7 @@ MEM_PER_TASK="2560M"                 # WORKER_MAX_MEMORY + a part's peak + slack
 # bounded. MEM_PER_TASK must cover it plus a part's transient peak (~400 MB)
 # plus what sacct counts beyond the worker (~300 MB). Empty = never restart.
 WORKER_MAX_MEMORY=1500
-WALLTIME="48:00:00"                  # per worker
+WALLTIME="24:00:00"                  # per worker
 MERGE_WALLTIME="04:00:00"
 
 # How cells are cut into parts. A cell is cut into parts of about UNIT_MINUTES
@@ -79,7 +79,7 @@ STALE_MINUTES=10
 #      just the functions that are new or changed since that release
 # Empty = no costs: every cell is cut into MAX_PARTS, which works but is
 # coarse. See README, "Sizing the pool".
-COSTS="/sweeps/parts/calib-20261008T175501"
+COSTS=""
 
 # The validation array (slurm-validate.sbatch): after the merge, each task
 # checks a share of the references against 256-bit MPFR. Units are distinct
