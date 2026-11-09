@@ -23,13 +23,23 @@ consecutive sampling calls, `--per-call` values each.
 
 | File       | What it does                                                                 |
 |------------|------------------------------------------------------------------------------|
-| `build.sh` | Builds TestU01 (and PractRand with `--practrand`) from `vendor/` into `_deps/`, compiles the harness `testu01` |
-| `vendor/` | The sources of TestU01 and PractRand, with their origin and licenses in `vendor/README.md` |
+| `build.sh` | Downloads and builds TestU01 (and PractRand with `--practrand`) into `_deps/`, compiles the harness `testu01` |
 | `testu01.c`| Reads raw 32-bit words (or doubles, `-d`) from stdin and runs one battery    |
 | `gen.R`    | Writes anvl's stream of consecutive sampling calls to stdout, from one seed or several interleaved |
 | `run.sh`   | Pipes `gen.R` into a battery and files the report under `results/`          |
 
 `_deps/`, the binaries and `results/` are gitignored.
+
+`build.sh` downloads the batteries from their authors and checks each archive
+against a SHA-256 written in the script:
+
+- TestU01 1.2.3 by Pierre L'Ecuyer and Richard Simard, from
+  <https://github.com/umontreal-simul/TestU01-2009> at commit
+  `57e98bf33880daedc930739c81e39b89a8d24dba`. Apache License 2.0.
+- PractRand pre-0.95 by Chris Doty-Humphrey, from
+  <https://downloads.sourceforge.net/project/pracrand/PractRand-pre0.95.zip>.
+  Public domain, as its [SourceForge project page](https://sourceforge.net/projects/pracrand/)
+  states; the archive itself contains no license file.
 
 ## Quick start
 
@@ -40,7 +50,7 @@ one `ANVL_PATH` names (set `ANVL_INSTALLED=1` to use the installed package).
 
 ```bash
 cd rng-testu01
-./build.sh                       # TestU01 + harness, ~20 s
+./build.sh                       # TestU01 + harness, ~20 s (needs network)
 ./build.sh --practrand           # also PractRand's RNG_test, ~1 min
 
 ./run.sh smallcrush              # seed 42, ~20 s
