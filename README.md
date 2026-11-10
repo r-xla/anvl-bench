@@ -13,6 +13,9 @@ presents their results.
 > reference these sweeps compare against, not an oracle, and in places it is the
 > weaker implementation. The site is worded accordingly.
 
+Besides the site, `rng-testu01/` runs anvl's random number generator through
+the TestU01 and PractRand test batteries (see its README).
+
 ## What the site shows
 
 The site reads an artifact exported by the harness (schema version 8 or
