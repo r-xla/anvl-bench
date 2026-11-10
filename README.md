@@ -14,9 +14,7 @@ presents their results.
 > weaker implementation. The site is worded accordingly.
 
 Besides the site, `rng-testu01/` runs anvl's random number generator through
-the TestU01 and PractRand test batteries (see its README), and
-`rng-analysis/` holds the analysis of the generator that the anvl articles
-draw on.
+the TestU01 and PractRand test batteries (see its README).
 
 ## What the site shows
 
