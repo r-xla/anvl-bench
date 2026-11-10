@@ -12,8 +12,9 @@ global random state is a key k, the seed passed to `nv_set_seed()`, and a
 counter c, which starts at 0. Every call of `prim_sample_bits()`, a *sampling
 call*, splits the random state: it draws from the fresh key
 k' = ThreeFry_k(c), hashing it with the counters 0, 1, 2, ..., and advances c
-by one. A `ui32` draw takes the low and then the high word of each hash. See
-the "Random Numbers" vignette for the details.
+by one. Value t of a draw comes from the hash of the counter t: a `ui32` value
+is the xor of the hash's two words, a `ui64` value its first word above its
+second, as in JAX. See the "Random Numbers" vignette for the details.
 
 So the stream a user sees is made of many keys, each used for the few values
 of one sampling call. `gen.R` writes exactly that stream: the values of
@@ -107,9 +108,9 @@ the bits of every word, `-v` prints TestU01's detailed output.
 
 ### Variants worth running
 
-- **Values per sampling call** (`--per-call 1`, `2`, `4`, ...). With `ui32`
-  and one value per call, each key contributes only the low word of its first
-  hash; with two, both words of it; with more, consecutive hashes of one key.
+- **Values per sampling call** (`--per-call 1`, `2`, `4`, ...). With one
+  value per call, each key contributes only its first hash; with more,
+  consecutive hashes of one key.
 - **Several seeds.** One battery run is one sample: rerun with other `--seed`s.
 - **Reversed bits** (`TESTU01_OPTS=-r`). Most TestU01 tests turn each word
   into a uniform in [0, 1) and look at its leading bits, so the low bits of a
@@ -126,17 +127,18 @@ other), which need a way to draw from a random state other than the global one.
 
 ## The batteries
 
-The word counts are those the harness reported for SmallCrush, and those of
-the TestU01 user guide (L'Ecuyer & Simard, 2007) for Crush and BigCrush. Times
-are for this harness on one core of the dev machine for SmallCrush; for Crush
-and BigCrush they are rough: TestU01's own computation dominates them, and it
-runs concurrently with the generator.
+The word counts are those the harness reported for SmallCrush and BigCrush,
+and that of the TestU01 user guide (L'Ecuyer & Simard, 2007) for Crush. Times
+are for this harness on one core of the dev machine for SmallCrush, and rough
+for Crush. The BigCrush time is that of a 4-core job on the `lrz-cpu` nodes of
+the LRZ AI Systems (Xeon Gold 6148), where the generator sets the pace (see
+below).
 
 | Battery    | Tests / statistics | 32-bit words consumed   | Time            |
 |------------|--------------------|-------------------------|-----------------|
 | SmallCrush | 10 / 15            | 2.27e8 (~2^27.8, ~0.9 GB) | ~20 s         |
 | Crush      | 96 / 144           | ~2^35 (~140 GB)         | ~1 h            |
-| BigCrush   | 106 / 160          | ~2^38 (~1.1 TB)         | ~4-8 h          |
+| BigCrush   | 106 / 160          | 3.57e11 (~2^38.4, ~1.4 TB) | ~11 h        |
 | PractRand  | grows by doubling  | `-tlmax` bytes          | ~12 s per GB    |
 
 - **SmallCrush** is a quick screen: birthday spacings, collisions, gaps,
@@ -153,9 +155,11 @@ runs concurrently with the generator.
   longer prefixes of the stream (256 MB, 512 MB, 1 GB, ...), so it is a cheap
   way to look further into one stream than BigCrush does.
 
-anvl's generator throughput (draw plus read-back into R) is about 250 MB/s, so
-it feeds Crush in about 10 minutes and BigCrush in about 75 minutes, less than
-TestU01 itself needs.
+anvl's generator throughput (draw plus read-back into R) is about 250 MB/s on
+the dev machine, so there it feeds Crush in about 10 minutes and BigCrush in
+about 95 minutes, less than TestU01 itself needs. On the `lrz-cpu` nodes it is
+37-40 MB/s, and the generator sets the pace: BigCrush takes about 11 h there,
+of which TestU01 itself uses 5.5 h of CPU time, and PractRand about 27 s per GB.
 
 ### Reading a report
 
@@ -189,35 +193,42 @@ hash, which tests the algorithm rather than anvl.
 
 ## Results
 
-Results for the stream described above, on the dev container
-(`feat/rng-split`). Earlier runs of this harness tested an earlier scheme, in
-which every draw continued the counter of one key, and are not repeated here.
+Results for the stream described above, from anvl's `feat/rng-split-review`
+(`8311ca1`, with pjrt `00a228f`), on the `lrz-cpu` nodes of the LRZ AI Systems
+on 2026-11-09 and 2026-11-10. Every run passed.
 
-On 2026-10-15, every SmallCrush run passed:
+SmallCrush:
 
 | Run                                       | Smallest / largest p-value |
 |-------------------------------------------|----------------------------|
-| `--per-call 1`                            | 0.024 / 0.98               |
-| `--per-call 1 --seed 1`                   | 0.14 / 0.78                |
-| `--per-call 1`, `-r`                      | 9.8e-5 / 0.99 (see below)  |
-| `--per-call 2`                            | 0.029 / 0.98               |
-| `--per-call 2`, `-r`                      | 0.031 / 0.90               |
-| `--per-call 4`                            | 0.048 / 0.97               |
-| `--per-call 3 --dtype ui64`               | 0.0023 / 0.92              |
-| `--per-call 1 --streams 64`               | 0.085 / 0.92               |
-| `--per-call 1 --mode unif`                | 0.0076 / 0.85              |
+| `--per-call 1`                            | 0.13 / 0.98                |
+| `--per-call 1 --seed 1`                   | 0.015 / 0.99               |
+| `--per-call 1`, `-r`                      | 0.013 / 0.94               |
+| `--per-call 2`                            | 0.034 / 0.91               |
+| `--per-call 2`, `-r`                      | 0.15 / 0.99                |
+| `--per-call 4`                            | 0.0038 / 0.93              |
+| `--per-call 3 --dtype ui64`               | 0.16 / 0.93                |
+| `--per-call 1 --streams 64`               | 0.027 / 0.99               |
+| `--per-call 1 --mode unif`                | 0.22 / 0.94                |
 
-The one value outside [0.001, 0.999], RandomWalk1 M at p = 9.8e-5 with
-`--per-call 1` and reversed bits, is in TestU01's suspicious range, so the same
-configuration was rerun with the seeds 1, 2, 3, 7 and 100: all five passed every
-test, so it was noise.
-
-Crush passed all 144 statistics on the stream of one value per sampling call,
-the case in which each key is used for the fewest bits:
+BigCrush passed all 160 statistics on the stream of one value per sampling
+call, the case in which each key is used for the fewest bits:
 
 | Run                    | Smallest / largest p-value | Time   |
 |------------------------|----------------------------|--------|
-| `--per-call 1`         | 0.0049 / 0.998             | 2.6 h  |
-| `--per-call 1`, `-r`   | 0.019 / 0.996              | 2.1 h  |
+| `--per-call 1`         | 0.020 / 0.990              | 10.8 h |
+| `--per-call 1`, `-r`   | 0.0067 / 0.995             | 10.9 h |
 
-BigCrush and PractRand have not been run on this stream yet.
+PractRand rated nothing suspicious or worse. Each "unusual" evaluation came from
+a different test and did not recur at the next length:
+
+| Run                         | Tested up to | Time   | "Unusual" evaluations                                          |
+|-----------------------------|--------------|--------|----------------------------------------------------------------|
+| `--per-call 1`              | 1 TB         | 7.7 h  | BCFN at 512 GB (p = 1 - 8.8e-4), [Low1/32]mod3n at 1 TB (p = 1 - 2.4e-4) |
+| `--per-call 1 --streams 16` | 64 GB        | 37 min | [Low1/32]BCFN at 256 MB (p = 1 - 3.0e-4)                        |
+
+Crush has not been run on this stream. It passed all 144 statistics with
+`--per-call 1` (smallest / largest p-value 0.0049 / 0.998) and with reversed
+bits (0.019 / 0.996) on 2026-10-15, on the stream of `feat/rng-split` at the
+time, which made two `ui32` values of each hash, its low and its high word,
+where the current stream xors them into one.
