@@ -154,8 +154,11 @@ calls_numbers <- jit(function(k0, k1, c_lo, c_hi) {
   if (o$mode == "bits") {
     return(nv_bitcast_convert(values, dtype = "i64"))
   }
+  # the top 52 bits as the mantissa of a double in [1, 2), minus 1; an exact 0
+  # becomes 2^-53, as in nv_runif()
   one <- nv_bitcast_convert(nv_scalar(1, dtype = "f64"), dtype = "ui64")
-  nv_bitcast_convert(nv_or(nv_shift_right_logical(values, 11L), one), dtype = "f64") - 1
+  u <- nv_bitcast_convert(nv_or(nv_shift_right_logical(values, 12L), one), dtype = "f64") - 1
+  nv_ifelse(nv_le(u, 0), 2^-53, u)
 })
 
 ## The numbers of the sampling calls c, ..., c + m - 1 of the random state with
