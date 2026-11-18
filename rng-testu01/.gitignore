@@ -1,0 +1,7 @@
+# The TestU01 / PractRand builds and the compiled harness are
+# machine-specific; `build.sh` downloads and rebuilds them.
+/_deps/
+/testu01
+/RNG_test
+# Battery reports
+/results/
